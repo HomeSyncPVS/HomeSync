@@ -1,0 +1,95 @@
+import uuid
+from typing import AsyncGenerator, List, Optional
+from fastapi import Depends, Security
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.db.session import get_db
+from app.models.user import User
+from app.repositories.user import UserRepository
+from app.repositories.session import SessionRepository
+from app.exceptions.custom import AuthenticationError, ForbiddenError
+from app.core.security import verify_token
+
+reusable_oauth2 = OAuth2PasswordBearer(
+    tokenUrl=f"{settings.API_V1_STR}/auth/login"
+)
+
+user_repo = UserRepository()
+session_repo = SessionRepository()
+
+
+async def get_current_user(
+    db: AsyncSession = Depends(get_db), token: str = Depends(reusable_oauth2)
+) -> User:
+    """
+    Decodes the JWT access token and returns the authenticated User.
+    Verifies that the session linked to this access token is active.
+    """
+    payload = verify_token(token)
+    if not payload or payload.get("token_type") != "access":
+        raise AuthenticationError(detail="Invalid or expired access token.", error_code="INVALID_ACCESS_TOKEN")
+
+    user_id = payload.get("sub")
+    session_id = payload.get("session_id")
+
+    if not user_id or not session_id:
+        raise AuthenticationError(detail="Invalid token format.", error_code="INVALID_TOKEN_FORMAT")
+
+    # Verify session is still active (Blacklisted token and session revocation validation)
+    session = await session_repo.get(db, uuid.UUID(session_id))
+    if not session or not session.is_active:
+        raise AuthenticationError(detail="Session has been revoked or expired.", error_code="SESSION_REVOKED")
+
+    user = await user_repo.get(db, uuid.UUID(user_id))
+    if not user:
+        raise AuthenticationError(detail="User not found.", error_code="USER_NOT_FOUND")
+
+    if not user.is_active:
+        raise ForbiddenError(detail="User account is deactivated.")
+
+    return user
+
+
+async def get_current_active_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """
+    Dependency checking that the authenticated user is active.
+    """
+    if not current_user.is_active:
+        raise ForbiddenError(detail="Inactive user.")
+    return current_user
+
+
+async def get_current_verified_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """
+    Dependency checking that the authenticated user is verified.
+    """
+    if not current_user.is_verified:
+        raise ForbiddenError(detail="Email address must be verified.", error_code="EMAIL_NOT_VERIFIED")
+    return current_user
+
+
+class PermissionChecker:
+    def __init__(self, required_permission: str):
+        """
+        Dynamically check roles and permissions.
+        """
+        self.required_permission = required_permission
+
+    def __call__(self, current_user: User = Depends(get_current_user)) -> User:
+        # Super Admin bypasses all checks
+        if current_user.role.name == "Super Admin":
+            return current_user
+
+        # Get list of permissions
+        permissions = [p.name for p in current_user.role.permissions]
+        if self.required_permission not in permissions:
+            raise ForbiddenError(
+                detail=f"Action requires permission: {self.required_permission}"
+            )
+        return current_user
