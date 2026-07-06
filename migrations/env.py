@@ -71,6 +71,8 @@ async def run_async_migrations() -> None:
     and associate a connection with the context.
 
     """
+    from app.db.database import resolved_url, connect_args
+
     connectable = create_async_engine(
         resolved_url,
         poolclass=pool.NullPool,

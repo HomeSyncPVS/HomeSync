@@ -1,7 +1,7 @@
 import uuid
-from datetime import date, datetime
-from typing import Optional
-from sqlalchemy import Date, DateTime, String, ForeignKey, Float, Integer, Text, UniqueConstraint, func
+from datetime import datetime, date
+from typing import List, Optional
+from sqlalchemy import DateTime, Date, String, Float, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import Base
@@ -25,18 +25,22 @@ class MaintenanceBill(Base):
         nullable=False,
         index=True,
     )
-    bill_number: Mapped[str] = mapped_column(String(50), nullable=False)
-    bill_type: Mapped[str] = mapped_column(String(50), nullable=False, default="MAINTENANCE")
-    billing_period: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    issue_date: Mapped[date] = mapped_column(Date, nullable=False)
-    due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    subtotal_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    late_fee_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    total_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    paid_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="GENERATED", index=True)
-    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    bill_number: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    bill_type: Mapped[str] = mapped_column(String(50), nullable=False)  # Enum: BillType
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")  # Enum: BillStatus
+    due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    billing_period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    billing_period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    
+    subtotal: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    late_fee: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    total_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    paid_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    outstanding_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Soft Delete & Audit fields
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -56,11 +60,14 @@ class MaintenanceBill(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
-    items: Mapped[list["BillItem"]] = relationship(
-        "BillItem", back_populates="bill", cascade="all, delete-orphan"
+    # Relationships
+    society: Mapped["Society"] = relationship("Society")
+    flat: Mapped["Flat"] = relationship("Flat")
+    items: Mapped[List["BillItem"]] = relationship(
+        "BillItem", back_populates="bill", cascade="all, delete-orphan", lazy="selectin"
     )
-    payments: Mapped[list["Payment"]] = relationship(
-        "Payment", back_populates="bill", cascade="all, delete-orphan"
+    payments: Mapped[List["Payment"]] = relationship(
+        "Payment", back_populates="bill"
     )
 
     __table_args__ = (
@@ -80,20 +87,8 @@ class BillItem(Base):
         nullable=False,
         index=True,
     )
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    unit_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
-
+    # Relationships
     bill: Mapped[MaintenanceBill] = relationship("MaintenanceBill", back_populates="items")

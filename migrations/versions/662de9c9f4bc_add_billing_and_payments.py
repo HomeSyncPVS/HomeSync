@@ -1,0 +1,149 @@
+"""add_billing_and_payments
+
+Revision ID: 662de9c9f4bc
+Revises: 067dd28b623a
+Create Date: 2026-07-06 17:38:58.484137
+
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+# revision identifiers, used by Alembic.
+revision: str = '662de9c9f4bc'
+down_revision: Union[str, Sequence[str], None] = '067dd28b623a'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    # bill_items modifications
+    op.add_column('bill_items', sa.Column('name', sa.String(length=255), nullable=False))
+    op.drop_column('bill_items', 'title')
+    op.drop_column('bill_items', 'created_at')
+    op.drop_column('bill_items', 'unit_price')
+    op.drop_column('bill_items', 'description')
+    op.drop_column('bill_items', 'quantity')
+    op.drop_column('bill_items', 'updated_at')
+    
+    # maintenance_bills modifications
+    op.add_column('maintenance_bills', sa.Column('billing_period_start', sa.Date(), nullable=False))
+    op.add_column('maintenance_bills', sa.Column('billing_period_end', sa.Date(), nullable=False))
+    op.add_column('maintenance_bills', sa.Column('subtotal', sa.Float(), nullable=False))
+    op.add_column('maintenance_bills', sa.Column('late_fee', sa.Float(), nullable=False))
+    op.add_column('maintenance_bills', sa.Column('outstanding_amount', sa.Float(), nullable=False))
+    op.add_column('maintenance_bills', sa.Column('sent_at', sa.DateTime(timezone=True), nullable=True))
+    op.alter_column('maintenance_bills', 'bill_number',
+               existing_type=sa.VARCHAR(length=50),
+               type_=sa.String(length=100),
+               existing_nullable=False)
+    op.alter_column('maintenance_bills', 'due_date',
+               existing_type=sa.DATE(),
+               type_=sa.DateTime(timezone=True),
+               existing_nullable=False)
+    op.drop_index('ix_maintenance_bills_billing_period', table_name='maintenance_bills')
+    op.drop_index('ix_maintenance_bills_due_date', table_name='maintenance_bills')
+    op.drop_index('ix_maintenance_bills_status', table_name='maintenance_bills')
+    op.create_index(op.f('ix_maintenance_bills_bill_number'), 'maintenance_bills', ['bill_number'], unique=False)
+    op.drop_column('maintenance_bills', 'subtotal_amount')
+    op.drop_column('maintenance_bills', 'notes')
+    op.drop_column('maintenance_bills', 'issue_date')
+    op.drop_column('maintenance_bills', 'billing_period')
+    op.drop_column('maintenance_bills', 'late_fee_amount')
+    
+    # payment_receipts modifications
+    op.add_column('payment_receipts', sa.Column('pdf_url', sa.String(length=512), nullable=True))
+    op.add_column('payment_receipts', sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False))
+    op.drop_column('payment_receipts', 'receipt_url')
+    op.drop_column('payment_receipts', 'issued_at')
+    
+    # payments modifications
+    op.add_column('payments', sa.Column('flat_id', sa.UUID(), nullable=False))
+    op.add_column('payments', sa.Column('payment_number', sa.String(length=100), nullable=False))
+    op.add_column('payments', sa.Column('payment_method', sa.String(length=50), nullable=False))
+    op.add_column('payments', sa.Column('refund_reason', sa.String(length=512), nullable=True))
+    op.alter_column('payments', 'bill_id',
+               existing_type=sa.UUID(),
+               nullable=True)
+    op.drop_index('ix_payments_gateway_order_id', table_name='payments')
+    op.drop_index('ix_payments_gateway_payment_id', table_name='payments')
+    op.drop_index('ix_payments_status', table_name='payments')
+    op.create_index(op.f('ix_payments_flat_id'), 'payments', ['flat_id'], unique=False)
+    op.create_index(op.f('ix_payments_payment_number'), 'payments', ['payment_number'], unique=True)
+    op.drop_constraint('payments_bill_id_fkey', 'payments', type_='foreignkey')
+    op.create_foreign_key(None, 'payments', 'flats', ['flat_id'], ['id'], ondelete='CASCADE')
+    op.create_foreign_key(None, 'payments', 'maintenance_bills', ['bill_id'], ['id'], ondelete='SET NULL')
+    op.drop_column('payments', 'method')
+    op.drop_column('payments', 'gateway_response')
+    op.drop_column('payments', 'gateway_payment_id')
+    op.drop_column('payments', 'gateway_order_id')
+    op.drop_column('payments', 'gateway_signature')
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    # payments modifications
+    op.add_column('payments', sa.Column('gateway_signature', sa.VARCHAR(length=255), autoincrement=False, nullable=True))
+    op.add_column('payments', sa.Column('gateway_order_id', sa.VARCHAR(length=255), autoincrement=False, nullable=True))
+    op.add_column('payments', sa.Column('gateway_payment_id', sa.VARCHAR(length=255), autoincrement=False, nullable=True))
+    op.add_column('payments', sa.Column('gateway_response', sa.TEXT(), autoincrement=False, nullable=True))
+    op.add_column('payments', sa.Column('method', sa.VARCHAR(length=50), autoincrement=False, nullable=False))
+    op.drop_constraint(None, 'payments', type_='foreignkey')
+    op.drop_constraint(None, 'payments', type_='foreignkey')
+    op.create_foreign_key('payments_bill_id_fkey', 'payments', 'maintenance_bills', ['bill_id'], ['id'], ondelete='CASCADE')
+    op.drop_index(op.f('ix_payments_payment_number'), table_name='payments')
+    op.drop_index(op.f('ix_payments_flat_id'), table_name='payments')
+    op.create_index('ix_payments_status', 'payments', ['status'], unique=False)
+    op.create_index('ix_payments_gateway_payment_id', 'payments', ['gateway_payment_id'], unique=False)
+    op.create_index('ix_payments_gateway_order_id', 'payments', ['gateway_order_id'], unique=False)
+    op.alter_column('payments', 'bill_id',
+               existing_type=sa.UUID(),
+               nullable=False)
+    op.drop_column('payments', 'refund_reason')
+    op.drop_column('payments', 'payment_method')
+    op.drop_column('payments', 'payment_number')
+    op.drop_column('payments', 'flat_id')
+    
+    # payment_receipts modifications
+    op.add_column('payment_receipts', sa.Column('issued_at', postgresql.TIMESTAMP(timezone=True), server_default=sa.text('now()'), autoincrement=False, nullable=False))
+    op.add_column('payment_receipts', sa.Column('receipt_url', sa.VARCHAR(length=512), autoincrement=False, nullable=True))
+    op.drop_column('payment_receipts', 'created_at')
+    op.drop_column('payment_receipts', 'pdf_url')
+    
+    # maintenance_bills modifications
+    op.add_column('maintenance_bills', sa.Column('late_fee_amount', sa.DOUBLE_PRECISION(precision=53), autoincrement=False, nullable=False))
+    op.add_column('maintenance_bills', sa.Column('billing_period', sa.VARCHAR(length=20), autoincrement=False, nullable=False))
+    op.add_column('maintenance_bills', sa.Column('issue_date', sa.DATE(), autoincrement=False, nullable=False))
+    op.add_column('maintenance_bills', sa.Column('notes', sa.TEXT(), autoincrement=False, nullable=True))
+    op.add_column('maintenance_bills', sa.Column('subtotal_amount', sa.DOUBLE_PRECISION(precision=53), autoincrement=False, nullable=False))
+    op.drop_index(op.f('ix_maintenance_bills_bill_number'), table_name='maintenance_bills')
+    op.create_index('ix_maintenance_bills_status', 'maintenance_bills', ['status'], unique=False)
+    op.create_index('ix_maintenance_bills_due_date', 'maintenance_bills', ['due_date'], unique=False)
+    op.create_index('ix_maintenance_bills_billing_period', 'maintenance_bills', ['billing_period'], unique=False)
+    op.alter_column('maintenance_bills', 'due_date',
+               existing_type=sa.DateTime(timezone=True),
+               type_=sa.DATE(),
+               existing_nullable=False)
+    op.alter_column('maintenance_bills', 'bill_number',
+               existing_type=sa.String(length=100),
+               type_=sa.VARCHAR(length=50),
+               existing_nullable=False)
+    op.drop_column('maintenance_bills', 'sent_at')
+    op.drop_column('maintenance_bills', 'outstanding_amount')
+    op.drop_column('maintenance_bills', 'late_fee')
+    op.drop_column('maintenance_bills', 'subtotal')
+    op.drop_column('maintenance_bills', 'billing_period_end')
+    op.drop_column('maintenance_bills', 'billing_period_start')
+    
+    # bill_items modifications
+    op.add_column('bill_items', sa.Column('updated_at', postgresql.TIMESTAMP(timezone=True), server_default=sa.text('now()'), autoincrement=False, nullable=False))
+    op.add_column('bill_items', sa.Column('quantity', sa.INTEGER(), autoincrement=False, nullable=False))
+    op.add_column('bill_items', sa.Column('description', sa.TEXT(), autoincrement=False, nullable=True))
+    op.add_column('bill_items', sa.Column('unit_price', sa.DOUBLE_PRECISION(precision=53), autoincrement=False, nullable=False))
+    op.add_column('bill_items', sa.Column('created_at', postgresql.TIMESTAMP(timezone=True), server_default=sa.text('now()'), autoincrement=False, nullable=False))
+    op.add_column('bill_items', sa.Column('title', sa.VARCHAR(length=255), autoincrement=False, nullable=False))
+    op.drop_column('bill_items', 'name')
+    # ### end Alembic commands ###

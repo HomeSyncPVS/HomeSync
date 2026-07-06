@@ -1,64 +1,45 @@
-from datetime import date
-from typing import List
-from pydantic import BaseModel
+import uuid
+from datetime import datetime, date
+from typing import List, Optional
+from pydantic import BaseModel, Field
 
 
-class ReportSummary(BaseModel):
+class BillingReportItem(BaseModel):
+    bill_id: uuid.UUID
+    bill_number: str
+    society_name: str
+    flat_number: str
+    wing_name: str
+    bill_type: str
+    status: str
+    total_amount: float
+    outstanding_amount: float
+    due_date: datetime
+
+
+class PaymentReportItem(BaseModel):
+    payment_id: uuid.UUID
+    payment_number: str
+    bill_number: Optional[str] = None
+    flat_number: str
+    wing_name: str
+    amount: float
+    payment_method: str
+    status: str
+    transaction_reference: Optional[str] = None
+    paid_at: Optional[datetime] = None
+
+
+class OutstandingReportItem(BaseModel):
+    flat_id: uuid.UUID
+    flat_number: str
+    wing_name: str
+    total_outstanding: float
+    overdue_bills_count: int
+
+
+class RevenueReportItem(BaseModel):
+    period: str  # e.g., "2026-07"
     total_billed: float
     total_collected: float
-    total_outstanding: float
-    total_late_fee: float
-
-
-class BillingReportRow(BaseModel):
-    bill_number: str
-    billing_period: str
-    issue_date: date
-    due_date: date
-    total_amount: float
-    paid_amount: float
-    outstanding_amount: float
-    status: str
-
-
-class PaymentReportRow(BaseModel):
-    payment_id: str
-    bill_number: str
-    method: str
-    amount: float
-    status: str
-    paid_at: str
-
-
-class RevenueReportRow(BaseModel):
-    period: str
-    revenue: float
-
-
-class OutstandingReportRow(BaseModel):
-    bill_number: str
-    due_date: date
-    total_amount: float
-    paid_amount: float
-    outstanding_amount: float
-    status: str
-
-
-class BillingReportResponse(BaseModel):
-    summary: ReportSummary
-    rows: List[BillingReportRow]
-
-
-class PaymentReportResponse(BaseModel):
-    count: int
-    rows: List[PaymentReportRow]
-
-
-class RevenueReportResponse(BaseModel):
-    count: int
-    rows: List[RevenueReportRow]
-
-
-class OutstandingReportResponse(BaseModel):
-    count: int
-    rows: List[OutstandingReportRow]
+    collection_rate: float

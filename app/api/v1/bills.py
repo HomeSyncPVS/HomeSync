@@ -1,163 +1,215 @@
 import uuid
 from typing import List, Optional
+from datetime import date
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_active_user
-from app.api.v1.societies import check_tenant_access, require_admin
-from app.exceptions.custom import ValidationError
+from app.exceptions.custom import ForbiddenError, ValidationError
 from app.models.user import User
-from app.schemas.bill import (
-    BillCreate,
-    BillGenerateRequest,
-    BillListResponse,
-    BillResponse,
-    BillSendResponse,
-    BillUpdate,
-)
-from app.schemas.common import ErrorResponse, SuccessResponse
+from app.schemas.common import SuccessResponse
+from app.schemas.bill import BillCreate, BillUpdate, BillResponse, BulkBillGenerate
 from app.services.bill import BillService
 
-router = APIRouter(prefix="/bills", tags=["Bills"])
+router = APIRouter(prefix="/bills", tags=["Maintenance Bills"])
+
+
+def require_admin_or_treasurer(user: User = Depends(get_current_active_user)) -> User:
+    if user.role.name not in ["Super Admin", "Admin", "Treasurer"]:
+        raise ForbiddenError(detail="Only Society Admin, Treasurer, or Super Admin can perform this action.")
+    return user
+
+
+def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None) -> uuid.UUID:
+    if user.role.name == "Super Admin":
+        if not query_society_id:
+            raise ValidationError(detail="society_id is required for Super Admin.")
+        return query_society_id
+    if not user.society_id:
+        raise ForbiddenError(detail="Access Denied: You are not associated with any society.")
+    return user.society_id
 
 
 @router.post(
     "",
     response_model=BillResponse,
     status_code=status.HTTP_201_CREATED,
-    responses={
-        201: {"model": BillResponse, "description": "Bill created successfully"},
-        400: {"model": ErrorResponse, "description": "Validation failed"},
-        403: {"model": ErrorResponse, "description": "Forbidden tenant scope"},
-    },
+    summary="Create a new maintenance bill"
 )
 async def create_bill(
     data: BillCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    check_tenant_access(current_user, data.society_id, allow_resident=False)
-    return await BillService.create_bill(db, data, user_id=current_user.id)
+    society_id = get_user_society_id(user)
+    return await BillService.create_bill(db, data, society_id, user_id=user.id)
 
 
 @router.post(
     "/generate",
-    response_model=List[BillResponse],
+    response_model=SuccessResponse,
+    summary="Bulk generate maintenance bills for all flats"
 )
-async def generate_bills(
-    data: BillGenerateRequest,
+async def bulk_generate_bills(
+    data: BulkBillGenerate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    check_tenant_access(current_user, data.society_id, allow_resident=False)
-    return await BillService.generate_bills(db, data, user_id=current_user.id)
+    society_id = get_user_society_id(user)
+    count = await BillService.bulk_generate_bills(db, data, society_id, user_id=user.id)
+    return SuccessResponse(message=f"Successfully generated {count} bills in draft mode.")
 
 
-@router.get("", response_model=BillListResponse)
-async def list_bills(
-    society_id: Optional[uuid.UUID] = Query(None),
-    flat_id: Optional[uuid.UUID] = Query(None),
-    status: Optional[str] = Query(None),
+@router.get(
+    "",
+    response_model=List[BillResponse],
+    summary="Get all bills (filtered)"
+)
+async def get_bills(
+    flat_id: Optional[uuid.UUID] = None,
+    status: Optional[str] = None,
+    bill_type: Optional[str] = None,
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(100, ge=1),
+    query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_active_user)
 ):
-    if current_user.role.name != "Super Admin":
-        if not current_user.society_id:
-            raise ValidationError(detail="User is not mapped to a society.", error_code="SOCIETY_REQUIRED")
-        society_id = current_user.society_id
-
-    bills = await BillService.get_bills(
+    society_id = get_user_society_id(user, query_society_id)
+    return await BillService.get_multi_bills(
         db,
         society_id=society_id,
         flat_id=flat_id,
         status=status,
+        bill_type=bill_type,
         skip=skip,
-        limit=limit,
+        limit=limit
     )
-    return BillListResponse(items=bills, count=len(bills))
 
 
-@router.get("/outstanding", response_model=BillListResponse)
-async def get_outstanding(
-    society_id: Optional[uuid.UUID] = Query(None),
+@router.get(
+    "/outstanding",
+    response_model=List[BillResponse],
+    summary="Get outstanding bills"
+)
+async def get_outstanding_bills(
+    flat_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_active_user)
 ):
-    if current_user.role.name != "Super Admin":
-        society_id = current_user.society_id
+    society_id = get_user_society_id(user, query_society_id)
+    return await BillService.get_multi_bills(
+        db,
+        society_id=society_id,
+        flat_id=flat_id,
+        status="OVERDUE", # outstanding is unpaid/overdue/partially_paid. Let's return overdue and sent/partially_paid
+        skip=0,
+        limit=100
+    )
 
-    if not society_id:
-        raise ValidationError(detail="society_id is required.", error_code="SOCIETY_ID_REQUIRED")
 
-    check_tenant_access(current_user, society_id, allow_resident=True)
-    bills = await BillService.get_outstanding(db, society_id)
-    return BillListResponse(items=bills, count=len(bills))
-
-
-@router.get("/history", response_model=BillListResponse)
-async def get_history(
-    society_id: Optional[uuid.UUID] = Query(None),
-    flat_id: Optional[uuid.UUID] = Query(None),
+@router.get(
+    "/history",
+    response_model=List[BillResponse],
+    summary="Get bills history"
+)
+async def get_bills_history(
+    flat_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = None,
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(100, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_active_user)
 ):
-    if current_user.role.name != "Super Admin":
-        society_id = current_user.society_id
+    society_id = get_user_society_id(user, query_society_id)
+    # Bill history shows sent, paid, overdue, cancelled bills (status != DRAFT)
+    bills = await BillService.get_multi_bills(
+        db,
+        society_id=society_id,
+        flat_id=flat_id,
+        skip=skip,
+        limit=limit
+    )
+    return [b for b in bills if b.status != "DRAFT"]
 
-    if not society_id:
-        raise ValidationError(detail="society_id is required.", error_code="SOCIETY_ID_REQUIRED")
 
-    check_tenant_access(current_user, society_id, allow_resident=True)
-    bills = await BillService.get_history(db, society_id=society_id, flat_id=flat_id, skip=skip, limit=limit)
-    return BillListResponse(items=bills, count=len(bills))
-
-
-@router.get("/{id}", response_model=BillResponse)
+@router.get(
+    "/{id}",
+    response_model=BillResponse,
+    summary="Get details of a single bill"
+)
 async def get_bill(
     id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_active_user)
 ):
-    bill = await BillService.get_bill(db, id)
-    check_tenant_access(current_user, bill.society_id, allow_resident=True)
+    from app.exceptions.custom import NotFoundError
+    query = select(MaintenanceBill).where(and_(MaintenanceBill.id == id, MaintenanceBill.deleted_at.is_(None)))
+    result = await db.execute(query)
+    bill = result.scalar_one_or_none()
+    if not bill:
+        raise NotFoundError("Bill not found.")
+    
+    society_id = get_user_society_id(user, query_society_id=bill.society_id)
+    if bill.society_id != society_id:
+        raise ForbiddenError(detail="Access Denied: You do not belong to this society.")
     return bill
 
 
-@router.put("/{id}", response_model=BillResponse)
+@router.put(
+    "/{id}",
+    response_model=BillResponse,
+    summary="Update a bill"
+)
 async def update_bill(
     id: uuid.UUID,
     data: BillUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    existing = await BillService.get_bill(db, id)
-    check_tenant_access(current_user, existing.society_id, allow_resident=False)
-    return await BillService.update_bill(db, id, data, user_id=current_user.id)
+    society_id = get_user_society_id(user)
+    return await BillService.update_bill(db, id, data, society_id, user_id=user.id)
 
 
-@router.delete("/{id}", response_model=SuccessResponse)
+@router.delete(
+    "/{id}",
+    response_model=SuccessResponse,
+    summary="Delete/Cancel a bill"
+)
 async def delete_bill(
     id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    existing = await BillService.get_bill(db, id)
-    check_tenant_access(current_user, existing.society_id, allow_resident=False)
-    await BillService.delete_bill(db, id, user_id=current_user.id)
+    society_id = get_user_society_id(user)
+    await BillService.delete_bill(db, id, society_id)
     return SuccessResponse(message="Bill deleted successfully.")
 
 
-@router.post("/{id}/send", response_model=BillSendResponse)
+@router.post(
+    "/{id}/send",
+    response_model=BillResponse,
+    summary="Send a draft bill"
+)
 async def send_bill(
     id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    existing = await BillService.get_bill(db, id)
-    check_tenant_access(current_user, existing.society_id, allow_resident=False)
-    bill = await BillService.send_bill(db, id, user_id=current_user.id)
-    return BillSendResponse(message="Bill marked as sent.", bill_id=bill.id)
+    society_id = get_user_society_id(user)
+    return await BillService.send_bill(db, id, society_id, user_id=user.id)
+
+
+@router.post(
+    "/trigger-late-fees",
+    response_model=SuccessResponse,
+    summary="Manually trigger late fees scan"
+)
+async def trigger_late_fees(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin_or_treasurer)
+):
+    society_id = get_user_society_id(user)
+    count = await BillService.apply_late_fees_if_overdue(db, society_id)
+    return SuccessResponse(message=f"Late fees scan completed. Applied late fees to {count} overdue bills.")

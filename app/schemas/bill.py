@@ -1,96 +1,68 @@
 import uuid
-from datetime import date, datetime
+from datetime import datetime, date
 from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from app.core.constants import BillStatus, BillType
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class BillItemBase(BaseModel):
-    title: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = Field(None, max_length=1000)
-    quantity: int = Field(1, ge=1)
-    unit_price: float = Field(0.0, ge=0.0)
-    amount: Optional[float] = Field(None, ge=0.0)
+    name: str = Field(..., min_length=1, max_length=255, description="Name of the charge (e.g. Maintenance, Water)")
+    amount: float = Field(..., ge=0.0, description="Amount for this line item")
 
 
 class BillItemCreate(BillItemBase):
     pass
 
 
-class BillItemUpdate(BaseModel):
-    title: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = Field(None, max_length=1000)
-    quantity: Optional[int] = Field(None, ge=1)
-    unit_price: Optional[float] = Field(None, ge=0.0)
-    amount: Optional[float] = Field(None, ge=0.0)
-
-
 class BillItemResponse(BillItemBase):
     model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID
-    amount: float
+    bill_id: uuid.UUID
 
 
 class BillBase(BaseModel):
-    bill_type: BillType = BillType.MAINTENANCE
-    billing_period: str = Field(..., min_length=7, max_length=20, description="YYYY-MM recommended")
-    issue_date: date
-    due_date: date
-    notes: Optional[str] = Field(None, max_length=2000)
-
-    @field_validator("due_date")
-    @classmethod
-    def validate_due_date(cls, v: date, info):
-        issue_date = info.data.get("issue_date")
-        if issue_date and v < issue_date:
-            raise ValueError("due_date cannot be before issue_date")
-        return v
+    bill_type: str = Field(..., description="Billing frequency: MONTHLY, QUARTERLY, ANNUAL, ONE_TIME")
+    due_date: datetime = Field(..., description="Due date for payment")
+    billing_period_start: date = Field(..., description="Start date of billing period")
+    billing_period_end: date = Field(..., description="End date of billing period")
 
 
 class BillCreate(BillBase):
-    society_id: uuid.UUID
-    flat_id: uuid.UUID
-    bill_number: Optional[str] = Field(None, max_length=50)
-    items: List[BillItemCreate] = Field(default_factory=list)
-
-
-class BillGenerateRequest(BillBase):
-    society_id: uuid.UUID
-    flat_ids: Optional[List[uuid.UUID]] = None
-    items: List[BillItemCreate] = Field(default_factory=list)
+    flat_id: uuid.UUID = Field(..., description="Flat ID to bill")
+    items: List[BillItemCreate] = Field(..., min_length=1, description="List of line items")
 
 
 class BillUpdate(BaseModel):
-    due_date: Optional[date] = None
-    status: Optional[BillStatus] = None
-    notes: Optional[str] = Field(None, max_length=2000)
-    items: Optional[List[BillItemUpdate]] = None
+    status: Optional[str] = Field(None, description="UNPAID, PAID, PARTIALLY_PAID, OVERDUE, CANCELLED")
+    due_date: Optional[datetime] = None
+    billing_period_start: Optional[date] = None
+    billing_period_end: Optional[date] = None
+    late_fee: Optional[float] = Field(None, ge=0.0)
 
 
 class BillResponse(BillBase):
     model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID
     society_id: uuid.UUID
     flat_id: uuid.UUID
     bill_number: str
-    subtotal_amount: float
-    late_fee_amount: float
+    status: str
+    subtotal: float
+    late_fee: float
     total_amount: float
     paid_amount: float
-    status: str
+    outstanding_amount: float
+    sent_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    items: List[BillItemResponse] = Field(default_factory=list)
+    created_by: Optional[uuid.UUID] = None
+    updated_by: Optional[uuid.UUID] = None
+    items: List[BillItemResponse] = []
 
 
-class BillListResponse(BaseModel):
-    items: List[BillResponse]
-    count: int
-
-
-class BillSendResponse(BaseModel):
-    success: bool = True
-    message: str
-    bill_id: uuid.UUID
+class BulkBillGenerate(BaseModel):
+    bill_type: str = Field(..., description="MONTHLY, QUARTERLY, ANNUAL")
+    billing_period_start: date = Field(..., description="Start of billing period")
+    billing_period_end: date = Field(..., description="End of billing period")
+    due_date: datetime = Field(..., description="Payment due date")
+    fixed_amount: float = Field(..., ge=0.0, description="Base maintenance amount per flat")
+    item_name: str = Field("Base Maintenance Charge", description="Name of the main charge item")

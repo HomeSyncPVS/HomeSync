@@ -1,37 +1,35 @@
-from typing import Dict, List
+from typing import List, Dict, Any
 from pydantic import BaseModel
 
 
-class DashboardAnalyticsResponse(BaseModel):
-    total_bills: int
-    paid_bills: int
-    overdue_bills: int
-    total_billed_amount: float
-    total_collected_amount: float
+class DashboardStats(BaseModel):
+    total_bills_generated: int
+    total_bills_paid: int
+    collection_percentage: float
     total_outstanding_amount: float
+    late_payments_count: int
+    total_revenue_collected: float
 
 
-class RevenueAnalyticsPoint(BaseModel):
-    period: str
+class AnalyticsRevenueItem(BaseModel):
+    month: str  # YYYY-MM
     revenue: float
 
 
-class RevenueAnalyticsResponse(BaseModel):
-    points: List[RevenueAnalyticsPoint]
+class AnalyticsPaymentsItem(BaseModel):
+    method: str  # UPI, CASH, CHEQUE, ONLINE etc.
+    count: int
+    amount: float
 
 
-class PaymentsAnalyticsResponse(BaseModel):
-    by_status: Dict[str, int]
-    by_method: Dict[str, int]
-
-
-class CollectionsAnalyticsResponse(BaseModel):
+class AnalyticsCollectionsItem(BaseModel):
+    month: str
     billed_amount: float
     collected_amount: float
-    collection_rate: float
+    collection_percentage: float
 
 
-class OutstandingAnalyticsResponse(BaseModel):
+class AnalyticsOutstandingItem(BaseModel):
+    wing_name: str
     outstanding_amount: float
-    outstanding_count: int
-    overdue_count: int
+    flats_count: int

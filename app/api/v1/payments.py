@@ -1,123 +1,170 @@
 import uuid
-from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
 
 from app.api.deps import get_db, get_current_active_user
-from app.api.v1.societies import check_tenant_access, require_admin
-from app.exceptions.custom import ValidationError
+from app.exceptions.custom import ForbiddenError, ValidationError, NotFoundError
 from app.models.user import User
+from app.models.payment import Payment
+from app.schemas.common import SuccessResponse
 from app.schemas.payment import (
-    PaymentCreateOrderRequest,
-    PaymentCreateOrderResponse,
-    PaymentListResponse,
-    PaymentRefundRequest,
+    OrderCreate,
+    OrderResponse,
+    PaymentVerify,
     PaymentResponse,
-    PaymentVerifyRequest,
-    PaymentWebhookRequest,
+    PaymentRefund
 )
-from app.services.bill import BillService
 from app.services.payment import PaymentService
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
 
-@router.post("/create-order", response_model=PaymentCreateOrderResponse)
+def require_admin_or_treasurer(user: User = Depends(get_current_active_user)) -> User:
+    if user.role.name not in ["Super Admin", "Admin", "Treasurer"]:
+        raise ForbiddenError(detail="Only Society Admin, Treasurer, or Super Admin can perform this action.")
+    return user
+
+
+def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None) -> uuid.UUID:
+    if user.role.name == "Super Admin":
+        if not query_society_id:
+            raise ValidationError(detail="society_id is required for Super Admin.")
+        return query_society_id
+    if not user.society_id:
+        raise ForbiddenError(detail="Access Denied: You are not associated with any society.")
+    return user.society_id
+
+
+@router.post(
+    "/create-order",
+    response_model=OrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Initialize an online payment order"
+)
 async def create_order(
-    data: PaymentCreateOrderRequest,
+    data: OrderCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_active_user)
 ):
-    bill = await BillService.get_bill(db, data.bill_id)
-    check_tenant_access(current_user, bill.society_id, allow_resident=True)
-    payment = await PaymentService.create_order(db, data, user_id=current_user.id)
-    return PaymentCreateOrderResponse(
-        payment_id=payment.id,
-        gateway_order_id=payment.gateway_order_id or "",
-        amount=payment.amount,
-    )
+    # Only residents or admins of the society can initialize payment
+    society_id = get_user_society_id(user)
+    return await PaymentService.create_order(db, data, society_id, user_id=user.id)
 
 
-@router.post("/verify", response_model=PaymentResponse)
+@router.post(
+    "/verify",
+    response_model=PaymentResponse,
+    summary="Verify transaction payment status"
+)
 async def verify_payment(
-    data: PaymentVerifyRequest,
+    data: PaymentVerify,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_active_user)
 ):
-    payment = await PaymentService.verify_payment(db, data, user_id=current_user.id)
-    check_tenant_access(current_user, payment.society_id, allow_resident=True)
-    return payment
+    society_id = get_user_society_id(user)
+    return await PaymentService.verify_payment(db, data, society_id, user_id=user.id)
 
 
-@router.post("/webhook", response_model=PaymentResponse)
+@router.post(
+    "/webhook",
+    response_model=SuccessResponse,
+    summary="Webhook receiver for payment gateway events"
+)
 async def payment_webhook(
-    data: PaymentWebhookRequest,
-    db: AsyncSession = Depends(get_db),
+    payload: dict,
+    db: AsyncSession = Depends(get_db)
 ):
-    payment = await PaymentService.process_webhook(db, data)
-    return payment
+    await PaymentService.handle_webhook(db, payload)
+    return SuccessResponse(message="Webhook processed successfully.")
 
 
-@router.get("", response_model=PaymentListResponse)
-async def list_payments(
-    society_id: Optional[uuid.UUID] = Query(None),
-    bill_id: Optional[uuid.UUID] = Query(None),
-    status: Optional[str] = Query(None),
+@router.get(
+    "",
+    response_model=List[PaymentResponse],
+    summary="List payments"
+)
+async def get_payments(
+    flat_id: Optional[uuid.UUID] = None,
+    bill_id: Optional[uuid.UUID] = None,
+    status: Optional[str] = None,
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(100, ge=1),
+    query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_active_user)
 ):
-    if current_user.role.name != "Super Admin":
-        society_id = current_user.society_id
-
-    payments = await PaymentService.get_payments(
+    society_id = get_user_society_id(user, query_society_id)
+    return await PaymentService.get_multi_payments(
         db,
         society_id=society_id,
+        flat_id=flat_id,
         bill_id=bill_id,
         status=status,
         skip=skip,
-        limit=limit,
+        limit=limit
     )
-    return PaymentListResponse(items=payments, count=len(payments))
 
 
-@router.get("/history", response_model=PaymentListResponse)
-async def payment_history(
-    society_id: Optional[uuid.UUID] = Query(None),
+@router.get(
+    "/history",
+    response_model=List[PaymentResponse],
+    summary="Get payment history"
+)
+async def get_payment_history(
+    flat_id: Optional[uuid.UUID] = None,
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(100, ge=1),
+    query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_active_user)
 ):
-    if current_user.role.name != "Super Admin":
-        society_id = current_user.society_id
+    society_id = get_user_society_id(user, query_society_id)
+    # Payment history includes completed or refunded transactions
+    payments = await PaymentService.get_multi_payments(
+        db,
+        society_id=society_id,
+        flat_id=flat_id,
+        skip=skip,
+        limit=limit
+    )
+    return [p for p in payments if p.status in ["COMPLETED", "REFUNDED"]]
 
-    if not society_id:
-        raise ValidationError(detail="society_id is required.", error_code="SOCIETY_ID_REQUIRED")
 
-    check_tenant_access(current_user, society_id, allow_resident=True)
-    payments = await PaymentService.get_history(db, society_id=society_id, skip=skip, limit=limit)
-    return PaymentListResponse(items=payments, count=len(payments))
-
-
-@router.get("/{id}", response_model=PaymentResponse)
+@router.get(
+    "/{id}",
+    response_model=PaymentResponse,
+    summary="Get details of a single payment"
+)
 async def get_payment(
     id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_active_user)
 ):
-    payment = await PaymentService.get_payment(db, id)
-    check_tenant_access(current_user, payment.society_id, allow_resident=True)
-    return payment
+    # Fetch details and perform tenant check
+    query = select(Payment).where(and_(Payment.id == id, Payment.deleted_at.is_(None)))
+    result = await db.execute(query)
+    payment = result.scalar_one_or_none()
+    if not payment:
+        raise NotFoundError("Payment not found.")
+
+    society_id = get_user_society_id(user, query_society_id=payment.society_id)
+    if payment.society_id != society_id:
+        raise ForbiddenError(detail="Access Denied: You do not belong to this society.")
+        
+    return await PaymentService.get_payment(db, id, society_id)
 
 
-@router.post("/refund", response_model=PaymentResponse)
+@router.post(
+    "/refund",
+    response_model=PaymentResponse,
+    summary="Process a payment refund"
+)
 async def refund_payment(
-    data: PaymentRefundRequest,
+    data: PaymentRefund,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    payment = await PaymentService.refund_payment(db, data, user_id=current_user.id)
-    check_tenant_access(current_user, payment.society_id, allow_resident=False)
-    return payment
+    society_id = get_user_society_id(user)
+    return await PaymentService.refund_payment(db, data, society_id, user_id=user.id)

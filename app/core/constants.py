@@ -6,8 +6,12 @@ class RoleEnum(str, Enum):
     ADMIN = "Admin"
     RESIDENT = "Resident"
     STAFF = "Staff"
+<<<<<<< Updated upstream
     SECRETARY = "Secretary"
     CHAIRMAN = "Chairman"
+=======
+    TREASURER = "Treasurer"
+>>>>>>> Stashed changes
 
 
 class PermissionEnum(str, Enum):
@@ -53,25 +57,22 @@ class BillStatus(str, Enum):
 
 
 class BillType(str, Enum):
-    MAINTENANCE = "MAINTENANCE"
-    WATER = "WATER"
-    PARKING = "PARKING"
-    OTHER = "OTHER"
+    MONTHLY = "MONTHLY"
+    QUARTERLY = "QUARTERLY"
+    ANNUAL = "ANNUAL"
+    ONE_TIME = "ONE_TIME"
 
 
 class PaymentStatus(str, Enum):
-    CREATED = "CREATED"
     PENDING = "PENDING"
-    SUCCESS = "SUCCESS"
+    COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     REFUNDED = "REFUNDED"
 
 
 class PaymentMethod(str, Enum):
     UPI = "UPI"
-    CARD = "CARD"
-    NETBANKING = "NETBANKING"
-    WALLET = "WALLET"
+    BANK_TRANSFER = "BANK_TRANSFER"
     CASH = "CASH"
     CHEQUE = "CHEQUE"
-    ONLINE_GATEWAY = "ONLINE_GATEWAY"
+    ONLINE = "ONLINE"

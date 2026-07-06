@@ -1,300 +1,224 @@
 import uuid
-from datetime import date, datetime, timezone
+import logging
+from datetime import datetime, date, timezone
 from typing import List, Optional
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import BillStatus
-from app.exceptions.custom import ConflictError, NotFoundError, ValidationError
-from app.models.bill import BillItem, MaintenanceBill
+from app.exceptions.custom import NotFoundError, ConflictError, ValidationError
+from app.models.bill import MaintenanceBill, BillItem
 from app.models.flat import Flat
 from app.models.society import SocietySettings
 from app.repositories.bill import BillRepository
-from app.repositories.flat import FlatRepository
-from app.repositories.society import SocietyRepository
+from app.schemas.bill import BillCreate, BillUpdate, BulkBillGenerate
 
+logger = logging.getLogger(__name__)
 bill_repo = BillRepository()
-flat_repo = FlatRepository()
-society_repo = SocietyRepository()
 
 
 class BillService:
     @staticmethod
-    def _compute_item_amount(quantity: int, unit_price: float, amount: Optional[float]) -> float:
-        if amount is not None:
-            return round(float(amount), 2)
-        return round(float(quantity) * float(unit_price), 2)
+    async def _generate_bill_number(db: AsyncSession, society_id: uuid.UUID) -> str:
+        """
+        Generate auto bill number in format: BILL-{YYYYMM}-{SEQ:04d}
+        """
+        now = datetime.now(timezone.utc)
+        prefix = f"BILL-{now.strftime('%Y%m')}-"
+        last_seq = await bill_repo.get_max_bill_number_sequence(db, society_id, prefix)
+        new_seq = last_seq + 1
+        return f"{prefix}{new_seq:04d}"
 
     @staticmethod
-    def _compute_late_fee(subtotal: float, due_date: date, late_fee_percentage: float, as_of: date) -> float:
-        if as_of <= due_date or subtotal <= 0:
-            return 0.0
-        days_overdue = (as_of - due_date).days
-        proportional_factor = days_overdue / 30.0
-        fee = subtotal * (late_fee_percentage / 100.0) * proportional_factor
-        return round(max(fee, 0.0), 2)
-
-    @staticmethod
-    async def _generate_bill_number(db: AsyncSession, society_id: uuid.UUID, issue_date: date) -> str:
-        yyyymm = issue_date.strftime("%Y%m")
-        prefix = f"BILL-{yyyymm}-"
-
-        query = select(func.max(MaintenanceBill.bill_number)).where(
-            and_(
-                MaintenanceBill.society_id == society_id,
-                MaintenanceBill.bill_number.like(f"{prefix}%"),
-            )
-        )
+    async def create_bill(db: AsyncSession, data: BillCreate, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
+        # Check if flat exists and belongs to the society
+        query = select(Flat).where(and_(Flat.id == data.flat_id, Flat.deleted_at.is_(None)))
         result = await db.execute(query)
-        max_bill_number = result.scalar_one_or_none()
-
-        seq = 1
-        if max_bill_number:
-            try:
-                seq = int(max_bill_number.split("-")[-1]) + 1
-            except (ValueError, IndexError):
-                seq = 1
-
-        return f"{prefix}{seq:04d}"
-
-    @staticmethod
-    async def _get_late_fee_percentage(db: AsyncSession, society_id: uuid.UUID) -> float:
-        query = select(SocietySettings).where(
-            and_(
-                SocietySettings.society_id == society_id,
-                SocietySettings.deleted_at.is_(None),
-            )
-        )
-        result = await db.execute(query)
-        settings = result.scalar_one_or_none()
-        if not settings:
-            return 0.0
-        return float(settings.late_fee_percentage or 0.0)
-
-    @staticmethod
-    async def create_bill(
-        db: AsyncSession,
-        data,
-        user_id: Optional[uuid.UUID] = None,
-    ) -> MaintenanceBill:
-        society = await society_repo.get_active(db, data.society_id)
-        if not society:
-            raise NotFoundError(detail="Society not found or is inactive.", error_code="SOCIETY_NOT_FOUND")
-
-        flat = await flat_repo.get_active(db, data.flat_id)
+        flat = result.scalar_one_or_none()
         if not flat:
-            raise NotFoundError(detail="Flat not found or is inactive.", error_code="FLAT_NOT_FOUND")
-        if flat.society_id != data.society_id:
-            raise ValidationError(
-                detail="Flat does not belong to the selected society.",
-                error_code="INVALID_FLAT_SOCIETY",
-            )
+            raise NotFoundError("Flat not found.")
+        if flat.society_id != society_id:
+            raise ValidationError("Flat does not belong to this society.")
 
-        bill_number = data.bill_number or await BillService._generate_bill_number(db, data.society_id, data.issue_date)
-        existing = await bill_repo.get_by_bill_number(db, data.society_id, bill_number)
-        if existing:
-            raise ConflictError(
-                detail=f"Bill number '{bill_number}' already exists for this society.",
-                error_code="BILL_NUMBER_EXISTS",
-            )
-
-        subtotal = 0.0
-        item_models: List[BillItem] = []
-        for item in data.items:
-            item_amount = BillService._compute_item_amount(item.quantity, item.unit_price, item.amount)
-            subtotal += item_amount
-            item_models.append(
-                BillItem(
-                    title=item.title,
-                    description=item.description,
-                    quantity=item.quantity,
-                    unit_price=float(item.unit_price),
-                    amount=item_amount,
-                )
-            )
-
-        late_fee_percentage = await BillService._get_late_fee_percentage(db, data.society_id)
-        late_fee = BillService._compute_late_fee(subtotal, data.due_date, late_fee_percentage, date.today())
-        total_amount = round(subtotal + late_fee, 2)
-
-        status = BillStatus.GENERATED.value
-        if date.today() > data.due_date and total_amount > 0:
-            status = BillStatus.OVERDUE.value
+        # Calculate subtotal
+        subtotal = sum(item.amount for item in data.items)
+        total_amount = subtotal
+        
+        bill_number = await BillService._generate_bill_number(db, society_id)
 
         bill_obj = MaintenanceBill(
-            society_id=data.society_id,
+            society_id=society_id,
             flat_id=data.flat_id,
             bill_number=bill_number,
-            bill_type=data.bill_type.value,
-            billing_period=data.billing_period,
-            issue_date=data.issue_date,
+            bill_type=data.bill_type,
+            status="DRAFT",
             due_date=data.due_date,
-            subtotal_amount=round(subtotal, 2),
-            late_fee_amount=late_fee,
+            billing_period_start=data.billing_period_start,
+            billing_period_end=data.billing_period_end,
+            subtotal=subtotal,
             total_amount=total_amount,
-            paid_amount=0.0,
-            status=status,
-            notes=data.notes,
+            outstanding_amount=total_amount,
             created_by=user_id,
             updated_by=user_id,
-            items=item_models,
         )
         bill = await bill_repo.create(db, obj_in=bill_obj)
+
+        # Create line items
+        for item in data.items:
+            await bill_repo.create_bill_item(db, bill_id=bill.id, name=item.name, amount=item.amount)
+
         await db.commit()
-        reloaded = await bill_repo.get_active(db, bill.id)
-        if not reloaded:
-            raise NotFoundError(detail="Bill not found after creation.", error_code="BILL_NOT_FOUND")
-        return reloaded
-
-    @staticmethod
-    async def generate_bills(db: AsyncSession, data, user_id: Optional[uuid.UUID] = None) -> List[MaintenanceBill]:
-        query = select(Flat).where(
-            and_(
-                Flat.society_id == data.society_id,
-                Flat.deleted_at.is_(None),
-            )
-        )
-        if data.flat_ids:
-            query = query.where(Flat.id.in_(data.flat_ids))
-
-        result = await db.execute(query)
-        flats = list(result.scalars().all())
-        if not flats:
-            return []
-
-        bills: List[MaintenanceBill] = []
-        for flat in flats:
-            payload = data.model_copy(update={"flat_id": flat.id})
-            bill = await BillService.create_bill(db, payload, user_id=user_id)
-            bills.append(bill)
-        return bills
-
-    @staticmethod
-    async def get_bill(db: AsyncSession, id: uuid.UUID) -> MaintenanceBill:
-        bill = await bill_repo.get_active(db, id)
-        if not bill:
-            raise NotFoundError(detail="Bill not found.", error_code="BILL_NOT_FOUND")
+        # Refresh to load relationships
+        db.add(bill)
+        await db.refresh(bill)
         return bill
 
     @staticmethod
-    async def get_bills(
+    async def bulk_generate_bills(db: AsyncSession, data: BulkBillGenerate, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> int:
+        # Fetch all active flats in the society
+        query = select(Flat).where(and_(Flat.society_id == society_id, Flat.deleted_at.is_(None)))
+        result = await db.execute(query)
+        flats = result.scalars().all()
+        if not flats:
+            raise ValidationError("No active flats found in this society to bill.")
+
+        now = datetime.now(timezone.utc)
+        prefix = f"BILL-{now.strftime('%Y%m')}-"
+        last_seq = await bill_repo.get_max_bill_number_sequence(db, society_id, prefix)
+
+        generated_count = 0
+        for i, flat in enumerate(flats):
+            seq = last_seq + 1 + i
+            bill_number = f"{prefix}{seq:04d}"
+
+            bill_obj = MaintenanceBill(
+                society_id=society_id,
+                flat_id=flat.id,
+                bill_number=bill_number,
+                bill_type=data.bill_type,
+                status="DRAFT",
+                due_date=data.due_date,
+                billing_period_start=data.billing_period_start,
+                billing_period_end=data.billing_period_end,
+                subtotal=data.fixed_amount,
+                total_amount=data.fixed_amount,
+                outstanding_amount=data.fixed_amount,
+                created_by=user_id,
+                updated_by=user_id,
+            )
+            bill = await bill_repo.create(db, obj_in=bill_obj)
+            await bill_repo.create_bill_item(db, bill_id=bill.id, name=data.item_name, amount=data.fixed_amount)
+            generated_count += 1
+
+        await db.commit()
+        return generated_count
+
+    @staticmethod
+    async def get_bill(db: AsyncSession, id: uuid.UUID, society_id: uuid.UUID) -> MaintenanceBill:
+        bill = await bill_repo.get_active(db, id)
+        if not bill or bill.society_id != society_id:
+            raise NotFoundError("Bill not found.")
+        return bill
+
+    @staticmethod
+    async def get_multi_bills(
         db: AsyncSession,
-        *,
-        society_id: Optional[uuid.UUID] = None,
+        society_id: uuid.UUID,
         flat_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
+        bill_type: Optional[str] = None,
         skip: int = 0,
-        limit: int = 100,
+        limit: int = 100
     ) -> List[MaintenanceBill]:
-        return await bill_repo.get_multi_active(
+        return await bill_repo.get_multi_bills(
             db,
             society_id=society_id,
             flat_id=flat_id,
             status=status,
+            bill_type=bill_type,
             skip=skip,
-            limit=limit,
+            limit=limit
         )
 
     @staticmethod
-    async def update_bill(db: AsyncSession, id: uuid.UUID, data, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
-        bill = await BillService.get_bill(db, id)
-
-        if bill.status in [BillStatus.PAID.value, BillStatus.CANCELLED.value]:
-            raise ValidationError(
-                detail="Paid or cancelled bills cannot be modified.",
-                error_code="BILL_NOT_EDITABLE",
-            )
-
+    async def update_bill(db: AsyncSession, id: uuid.UUID, data: BillUpdate, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
+        bill = await BillService.get_bill(db, id, society_id)
+        
+        # Calculate updated outstanding amount if status or late_fee changes
         update_dict = data.model_dump(exclude_unset=True)
-        update_dict["updated_by"] = user_id
+        if "late_fee" in update_dict:
+            bill.late_fee = update_dict["late_fee"]
+            bill.total_amount = bill.subtotal + bill.late_fee
+            bill.outstanding_amount = bill.total_amount - bill.paid_amount
+        
+        if "status" in update_dict:
+            bill.status = update_dict["status"]
 
-        if "status" in update_dict and update_dict["status"] is not None:
-            update_dict["status"] = update_dict["status"].value
-
-        if data.items is not None:
-            bill.items.clear()
-            subtotal = 0.0
-            for item in data.items:
-                quantity = item.quantity or 1
-                unit_price = float(item.unit_price or 0.0)
-                amount = BillService._compute_item_amount(quantity, unit_price, item.amount)
-                subtotal += amount
-                bill.items.append(
-                    BillItem(
-                        title=item.title or "Item",
-                        description=item.description,
-                        quantity=quantity,
-                        unit_price=unit_price,
-                        amount=amount,
-                    )
-                )
-
-            late_fee_percentage = await BillService._get_late_fee_percentage(db, bill.society_id)
-            late_fee = BillService._compute_late_fee(subtotal, bill.due_date, late_fee_percentage, date.today())
-            bill.subtotal_amount = round(subtotal, 2)
-            bill.late_fee_amount = late_fee
-            bill.total_amount = round(subtotal + late_fee, 2)
-
-        updated = await bill_repo.update(db, db_obj=bill, obj_in=update_dict)
-        await db.commit()
-        await db.refresh(updated)
-        return updated
-
-    @staticmethod
-    async def delete_bill(db: AsyncSession, id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
-        bill = await BillService.get_bill(db, id)
-        await bill_repo.delete_soft(db, id, user_id=user_id)
-        await db.commit()
-        return bill
-
-    @staticmethod
-    async def send_bill(db: AsyncSession, id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
-        bill = await BillService.get_bill(db, id)
-        if bill.status == BillStatus.DRAFT.value:
-            bill.status = BillStatus.SENT.value
-        elif bill.status in [BillStatus.GENERATED.value, BillStatus.OVERDUE.value]:
-            bill.status = BillStatus.SENT.value
+        # Save updates
         bill.updated_by = user_id
-        db.add(bill)
+        await bill_repo.update(db, db_obj=bill, obj_in=update_dict)
         await db.commit()
         await db.refresh(bill)
         return bill
 
     @staticmethod
-    async def get_outstanding(db: AsyncSession, society_id: uuid.UUID) -> List[MaintenanceBill]:
-        bills = await bill_repo.get_outstanding(db, society_id=society_id)
-        late_fee_percentage = await BillService._get_late_fee_percentage(db, society_id)
-
-        today = date.today()
-        for bill in bills:
-            dynamic_late_fee = BillService._compute_late_fee(
-                bill.subtotal_amount, bill.due_date, late_fee_percentage, today
-            )
-            if dynamic_late_fee != bill.late_fee_amount:
-                bill.late_fee_amount = dynamic_late_fee
-                bill.total_amount = round(bill.subtotal_amount + dynamic_late_fee, 2)
-                if bill.paid_amount >= bill.total_amount:
-                    bill.status = BillStatus.PAID.value
-                elif today > bill.due_date:
-                    bill.status = BillStatus.OVERDUE.value
-                db.add(bill)
-
+    async def delete_bill(db: AsyncSession, id: uuid.UUID, society_id: uuid.UUID) -> None:
+        bill = await BillService.get_bill(db, id, society_id)
+        await bill_repo.delete(db, id=bill.id)
         await db.commit()
-        return bills
 
     @staticmethod
-    async def get_history(
-        db: AsyncSession,
-        *,
-        society_id: uuid.UUID,
-        flat_id: Optional[uuid.UUID] = None,
-        skip: int = 0,
-        limit: int = 100,
-    ) -> List[MaintenanceBill]:
-        return await bill_repo.get_multi_active(
-            db,
-            society_id=society_id,
-            flat_id=flat_id,
-            skip=skip,
-            limit=limit,
+    async def send_bill(db: AsyncSession, id: uuid.UUID, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
+        bill = await BillService.get_bill(db, id, society_id)
+        if bill.status != "DRAFT":
+            raise ValidationError("Only draft bills can be sent.")
+        
+        bill.status = "SENT"
+        bill.sent_at = datetime.now(timezone.utc)
+        bill.updated_by = user_id
+        await db.commit()
+        await db.refresh(bill)
+        
+        # Log/Stub: Trigger notification dispatcher here
+        logger.info(f"Notification triggered for sent bill: {bill.bill_number} to flat ID: {bill.flat_id}")
+        return bill
+
+    @staticmethod
+    async def apply_late_fees_if_overdue(db: AsyncSession, society_id: uuid.UUID) -> int:
+        """
+        Scan all active unpaid bills past their due date and apply late fees from society settings.
+        """
+        now = datetime.now(timezone.utc)
+        
+        # Get late fee settings
+        query = select(SocietySettings).where(SocietySettings.society_id == society_id)
+        result = await db.execute(query)
+        settings = result.scalar_one_or_none()
+        if not settings or settings.late_fee_percentage <= 0:
+            return 0
+
+        # Fetch overdue bills
+        query_bills = select(MaintenanceBill).where(
+            and_(
+                MaintenanceBill.society_id == society_id,
+                MaintenanceBill.due_date < now,
+                MaintenanceBill.status.in_(["SENT", "PARTIALLY_PAID"]),
+                MaintenanceBill.deleted_at.is_(None)
+            )
         )
+        result_bills = await db.execute(query_bills)
+        bills = result_bills.scalars().all()
+
+        updated_count = 0
+        for bill in bills:
+            # Apply proportional late fee to outstanding balance if not already applied
+            if bill.late_fee == 0:
+                fee = round(bill.outstanding_amount * (settings.late_fee_percentage / 100.0), 2)
+                bill.late_fee = fee
+                bill.total_amount += fee
+                bill.outstanding_amount += fee
+                bill.status = "OVERDUE"
+                updated_count += 1
+
+        if updated_count > 0:
+            await db.commit()
+        return updated_count

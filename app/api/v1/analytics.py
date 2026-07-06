@@ -1,83 +1,104 @@
 import uuid
-from fastapi import APIRouter, Depends, Query
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_active_user
-from app.api.v1.societies import check_tenant_access
-from app.exceptions.custom import ValidationError
+from app.exceptions.custom import ForbiddenError, ValidationError
 from app.models.user import User
 from app.schemas.analytics import (
-    CollectionsAnalyticsResponse,
-    DashboardAnalyticsResponse,
-    OutstandingAnalyticsResponse,
-    PaymentsAnalyticsResponse,
-    RevenueAnalyticsResponse,
+    DashboardStats,
+    AnalyticsRevenueItem,
+    AnalyticsPaymentsItem,
+    AnalyticsCollectionsItem,
+    AnalyticsOutstandingItem
 )
 from app.services.analytics import AnalyticsService
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
-def _resolve_society(current_user: User, society_id: uuid.UUID | None) -> uuid.UUID:
-    if current_user.role.name != "Super Admin":
-        if not current_user.society_id:
-            raise ValidationError(detail="User is not mapped to a society.", error_code="SOCIETY_REQUIRED")
-        return current_user.society_id
-    if not society_id:
-        raise ValidationError(detail="society_id is required for Super Admin.", error_code="SOCIETY_ID_REQUIRED")
-    return society_id
+def require_admin_or_treasurer(user: User = Depends(get_current_active_user)) -> User:
+    if user.role.name not in ["Super Admin", "Admin", "Treasurer"]:
+        raise ForbiddenError(detail="Only Society Admin, Treasurer, or Super Admin can perform this action.")
+    return user
 
 
-@router.get("/dashboard", response_model=DashboardAnalyticsResponse)
-async def dashboard(
-    society_id: uuid.UUID | None = Query(None),
+def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None) -> uuid.UUID:
+    if user.role.name == "Super Admin":
+        if not query_society_id:
+            raise ValidationError(detail="society_id is required for Super Admin.")
+        return query_society_id
+    if not user.society_id:
+        raise ForbiddenError(detail="Access Denied: You are not associated with any society.")
+    return user.society_id
+
+
+@router.get(
+    "/dashboard",
+    response_model=DashboardStats,
+    summary="Get overall dashboard analytics statistics"
+)
+async def get_dashboard_stats(
+    query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    target_society = _resolve_society(current_user, society_id)
-    check_tenant_access(current_user, target_society, allow_resident=True)
-    return await AnalyticsService.get_dashboard(db, target_society)
+    society_id = get_user_society_id(user, query_society_id)
+    return await AnalyticsService.get_dashboard_stats(db, society_id)
 
 
-@router.get("/revenue", response_model=RevenueAnalyticsResponse)
-async def revenue(
-    society_id: uuid.UUID | None = Query(None),
+@router.get(
+    "/revenue",
+    response_model=List[AnalyticsRevenueItem],
+    summary="Get monthly revenue analytics data"
+)
+async def get_revenue_analytics(
+    query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    target_society = _resolve_society(current_user, society_id)
-    check_tenant_access(current_user, target_society, allow_resident=True)
-    return await AnalyticsService.get_revenue(db, target_society)
+    society_id = get_user_society_id(user, query_society_id)
+    return await AnalyticsService.get_revenue_analytics(db, society_id)
 
 
-@router.get("/payments", response_model=PaymentsAnalyticsResponse)
-async def payments(
-    society_id: uuid.UUID | None = Query(None),
+@router.get(
+    "/payments",
+    response_model=List[AnalyticsPaymentsItem],
+    summary="Get payment methods analytics breakdown"
+)
+async def get_payments_analytics(
+    query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    target_society = _resolve_society(current_user, society_id)
-    check_tenant_access(current_user, target_society, allow_resident=True)
-    return await AnalyticsService.get_payments(db, target_society)
+    society_id = get_user_society_id(user, query_society_id)
+    return await AnalyticsService.get_payments_analytics(db, society_id)
 
 
-@router.get("/collections", response_model=CollectionsAnalyticsResponse)
-async def collections(
-    society_id: uuid.UUID | None = Query(None),
+@router.get(
+    "/collections",
+    response_model=List[AnalyticsCollectionsItem],
+    summary="Get collections percentage history"
+)
+async def get_collections_analytics(
+    query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    target_society = _resolve_society(current_user, society_id)
-    check_tenant_access(current_user, target_society, allow_resident=True)
-    return await AnalyticsService.get_collections(db, target_society)
+    society_id = get_user_society_id(user, query_society_id)
+    return await AnalyticsService.get_collections_analytics(db, society_id)
 
 
-@router.get("/outstanding", response_model=OutstandingAnalyticsResponse)
-async def outstanding(
-    society_id: uuid.UUID | None = Query(None),
+@router.get(
+    "/outstanding",
+    response_model=List[AnalyticsOutstandingItem],
+    summary="Get outstanding amount breakdown by wings"
+)
+async def get_outstanding_analytics(
+    query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user: User = Depends(require_admin_or_treasurer)
 ):
-    target_society = _resolve_society(current_user, society_id)
-    check_tenant_access(current_user, target_society, allow_resident=True)
-    return await AnalyticsService.get_outstanding(db, target_society)
+    society_id = get_user_society_id(user, query_society_id)
+    return await AnalyticsService.get_outstanding_analytics(db, society_id)

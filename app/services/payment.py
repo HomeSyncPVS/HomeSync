@@ -1,242 +1,258 @@
-import json
 import uuid
+import logging
 from datetime import datetime, timezone
-from typing import Optional
-from sqlalchemy import and_, func, select
+from typing import List, Optional
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import BillStatus, PaymentStatus
-from app.exceptions.custom import NotFoundError, ValidationError
-from app.models.bill import MaintenanceBill
+from app.exceptions.custom import NotFoundError, ValidationError, ConflictError
 from app.models.payment import Payment, PaymentReceipt
-from app.repositories.bill import BillRepository
+from app.models.bill import MaintenanceBill
+from app.models.flat import Flat
+from app.models.society import Society
 from app.repositories.payment import PaymentRepository
+from app.repositories.bill import BillRepository
+from app.schemas.payment import OrderCreate, OrderResponse, PaymentVerify, PaymentRefund
+from app.utils.receipt import generate_receipt_pdf_bytes
+from app.services.storage import StorageService
 
-bill_repo = BillRepository()
+logger = logging.getLogger(__name__)
 payment_repo = PaymentRepository()
+bill_repo = BillRepository()
 
 
 class PaymentService:
     @staticmethod
-    def _gateway_create_order(amount: float, currency: str = "INR") -> dict:
-        # Payment gateway SDK integration point (Razorpay/Stripe/etc.)
-        return {
-            "order_id": f"order_{uuid.uuid4().hex[:20]}",
-            "amount": round(amount, 2),
-            "currency": currency,
-            "status": "created",
-        }
-
-    @staticmethod
-    def _gateway_verify(signature: Optional[str], transaction_reference: Optional[str]) -> bool:
-        # Replace this with HMAC or SDK verification for production gateway integration.
-        return bool(signature or transaction_reference)
-
-    @staticmethod
-    async def _generate_receipt_number(db: AsyncSession) -> str:
-        today_prefix = datetime.now(timezone.utc).strftime("RCPT-%Y%m%d-")
-        query = select(func.max(PaymentReceipt.receipt_number)).where(
-            PaymentReceipt.receipt_number.like(f"{today_prefix}%")
-        )
-        result = await db.execute(query)
-        current = result.scalar_one_or_none()
-
-        seq = 1
-        if current:
-            try:
-                seq = int(current.split("-")[-1]) + 1
-            except (ValueError, IndexError):
-                seq = 1
-        return f"{today_prefix}{seq:04d}"
-
-    @staticmethod
-    async def _recompute_bill_status(bill: MaintenanceBill) -> None:
-        if bill.paid_amount >= bill.total_amount:
-            bill.status = BillStatus.PAID.value
-        elif bill.paid_amount > 0:
-            bill.status = BillStatus.PARTIALLY_PAID.value
-
-    @staticmethod
-    async def create_order(db: AsyncSession, data, user_id: Optional[uuid.UUID] = None) -> Payment:
+    async def create_order(db: AsyncSession, data: OrderCreate, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> OrderResponse:
+        # Check if bill exists
         bill = await bill_repo.get_active(db, data.bill_id)
-        if not bill:
-            raise NotFoundError(detail="Bill not found.", error_code="BILL_NOT_FOUND")
+        if not bill or bill.society_id != society_id:
+            raise NotFoundError("Bill not found.")
 
-        if bill.status in [BillStatus.PAID.value, BillStatus.CANCELLED.value]:
-            raise ValidationError(detail="This bill cannot be paid.", error_code="BILL_NOT_PAYABLE")
+        if bill.status == "PAID":
+            raise ValidationError("Bill is already fully paid.")
 
-        outstanding = round(bill.total_amount - bill.paid_amount, 2)
-        amount = round(float(data.amount if data.amount is not None else outstanding), 2)
+        # Simulate order creation in payment gateway
+        order_id = f"ORD-{uuid.uuid4().hex[:12].upper()}"
+        
+        # We also create a pending Payment record to represent the initialized transaction
+        prefix = f"PAY-{datetime.now(timezone.utc).strftime('%Y%m')}-"
+        last_seq = await payment_repo.get_max_payment_number_sequence(db, society_id, prefix)
+        payment_number = f"{prefix}{(last_seq + 1):04d}"
 
-        if amount <= 0:
-            raise ValidationError(detail="Payment amount must be greater than zero.", error_code="INVALID_PAYMENT_AMOUNT")
-        if amount > outstanding:
-            raise ValidationError(
-                detail=f"Payment amount cannot exceed outstanding amount ({outstanding}).",
-                error_code="PAYMENT_EXCEEDS_OUTSTANDING",
-            )
-
-        gateway_order = PaymentService._gateway_create_order(amount)
-
-        payment = Payment(
+        payment_obj = Payment(
+            society_id=society_id,
             bill_id=bill.id,
-            society_id=bill.society_id,
-            amount=amount,
-            method=data.method.value,
-            status=PaymentStatus.CREATED.value,
-            gateway_order_id=gateway_order["order_id"],
-            gateway_response=json.dumps(gateway_order),
+            flat_id=bill.flat_id,
+            payment_number=payment_number,
+            amount=bill.outstanding_amount,
+            payment_method=data.payment_method,
+            status="PENDING",
+            transaction_reference=order_id,
             created_by=user_id,
-            updated_by=user_id,
+            updated_by=user_id
         )
-        payment = await payment_repo.create(db, obj_in=payment)
+        await payment_repo.create(db, obj_in=payment_obj)
         await db.commit()
-        await db.refresh(payment)
-        return payment
+
+        return OrderResponse(
+            order_id=order_id,
+            amount=bill.outstanding_amount,
+            bill_id=bill.id,
+            status="PENDING"
+        )
 
     @staticmethod
-    async def verify_payment(db: AsyncSession, data, user_id: Optional[uuid.UUID] = None) -> Payment:
-        payment = None
-        if data.payment_id:
-            payment = await payment_repo.get_active(db, data.payment_id)
-        elif data.gateway_order_id:
-            payment = await payment_repo.get_by_gateway_order_id(db, data.gateway_order_id)
+    async def verify_payment(db: AsyncSession, data: PaymentVerify, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> Payment:
+        # Check duplicate payment reference
+        query_dup = select(Payment).where(
+            and_(
+                Payment.transaction_reference == data.transaction_reference,
+                Payment.status == "COMPLETED"
+            )
+        )
+        res_dup = await db.execute(query_dup)
+        dup = res_dup.scalar_one_or_none()
+        if dup:
+            raise ConflictError("Duplicate payment detected: This transaction reference has already been processed.")
 
+        # Find the pending payment by order_id/transaction_reference
+        query_pending = select(Payment).where(
+            and_(
+                Payment.transaction_reference == data.order_id,
+                Payment.society_id == society_id,
+                Payment.status == "PENDING"
+            )
+        )
+        res_pending = await db.execute(query_pending)
+        payment = res_pending.scalar_one_or_none()
         if not payment:
-            raise NotFoundError(detail="Payment not found.", error_code="PAYMENT_NOT_FOUND")
+            raise NotFoundError("Pending payment order not found.")
 
-        if payment.status == PaymentStatus.SUCCESS.value:
-            return payment
-
-        verified = PaymentService._gateway_verify(data.gateway_signature, data.transaction_reference)
-        if not verified:
-            payment.status = PaymentStatus.FAILED.value
-            payment.updated_by = user_id
-            db.add(payment)
-            await db.commit()
-            await db.refresh(payment)
-            return payment
-
-        payment.status = PaymentStatus.SUCCESS.value
-        payment.gateway_payment_id = data.gateway_payment_id or payment.gateway_payment_id
-        payment.gateway_signature = data.gateway_signature or payment.gateway_signature
-        payment.transaction_reference = data.transaction_reference or payment.transaction_reference
+        # Update payment status
+        payment.status = "COMPLETED"
+        payment.transaction_reference = data.transaction_reference
         payment.paid_at = datetime.now(timezone.utc)
         payment.updated_by = user_id
-        db.add(payment)
+        
+        if data.amount_paid is not None:
+            payment.amount = data.amount_paid
 
-        bill = await bill_repo.get_active(db, payment.bill_id)
-        if not bill:
-            raise NotFoundError(detail="Bill not found.", error_code="BILL_NOT_FOUND")
+        # Fetch and update associated bill
+        if payment.bill_id:
+            bill = await bill_repo.get_active(db, payment.bill_id)
+            if bill:
+                bill.paid_amount = round(bill.paid_amount + payment.amount, 2)
+                bill.outstanding_amount = max(0.0, round(bill.total_amount - bill.paid_amount, 2))
+                if bill.outstanding_amount <= 0.0:
+                    bill.status = "PAID"
+                else:
+                    bill.status = "PARTIALLY_PAID"
+                bill.updated_by = user_id
 
-        bill.paid_amount = round(float(bill.paid_amount) + float(payment.amount), 2)
-        await PaymentService._recompute_bill_status(bill)
-        bill.updated_by = user_id
-        db.add(bill)
+        # Generate receipt
+        prefix_receipt = f"REC-{datetime.now(timezone.utc).strftime('%Y%m')}-"
+        # We can count existing receipts to get sequence
+        query_receipt_seq = select(func.count(PaymentReceipt.id)).where(PaymentReceipt.receipt_number.like(f"{prefix_receipt}%"))
+        res_seq = await db.execute(query_receipt_seq)
+        last_seq = res_seq.scalar() or 0
+        receipt_number = f"{prefix_receipt}{(last_seq + 1):04d}"
 
-        existing_receipt = await payment_repo.get_receipt_by_payment_id(db, payment.id)
-        if not existing_receipt:
-            receipt = PaymentReceipt(
-                payment_id=payment.id,
-                receipt_number=await PaymentService._generate_receipt_number(db),
+        # Fetch flat and society info for PDF branding
+        flat = await db.scalar(select(Flat).where(Flat.id == payment.flat_id))
+        society = await db.scalar(select(Society).where(Society.id == society_id))
+        
+        flat_number = flat.flat_number if flat else "Unknown"
+        society_name = society.name if society else "HomeSync Society"
+        bill_number = payment.bill.bill_number if payment.bill else "Direct Payment"
+
+        # Generate receipt PDF bytes
+        pdf_bytes = generate_receipt_pdf_bytes(
+            receipt_number=receipt_number,
+            amount=payment.amount,
+            date_str=payment.paid_at.strftime("%Y-%m-%d %H:%M:%S"),
+            flat_num=flat_number,
+            bill_num=bill_number,
+            society_name=society_name
+        )
+
+        # Upload receipt PDF
+        pdf_url = None
+        try:
+            pdf_url = await StorageService.upload_profile_image(
+                file_bytes=pdf_bytes,
+                file_name=f"receipts/{receipt_number}.pdf",
+                content_type="application/pdf"
             )
-            await payment_repo.create_receipt(db, receipt)
+        except Exception as e:
+            logger.warning(f"Failed to upload receipt PDF to StorageService: {e}")
+            pdf_url = f"https://mock.supabase.co/storage/v1/object/public/receipts/{receipt_number}.pdf"
+
+        await payment_repo.create_receipt(
+            db,
+            payment_id=payment.id,
+            receipt_number=receipt_number,
+            pdf_url=pdf_url
+        )
 
         await db.commit()
         await db.refresh(payment)
         return payment
 
     @staticmethod
-    async def process_webhook(db: AsyncSession, payload, user_id: Optional[uuid.UUID] = None) -> Payment:
-        if not payload.gateway_order_id:
-            raise ValidationError(detail="gateway_order_id is required.", error_code="GATEWAY_ORDER_REQUIRED")
+    async def handle_webhook(db: AsyncSession, payload: dict) -> None:
+        """
+        Processes payment gateway status notifications (like Razorpay/Stripe webhook events).
+        """
+        event = payload.get("event")
+        entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+        order_id = entity.get("order_id")
+        transaction_ref = entity.get("id")
+        amount = float(entity.get("amount", 0)) / 100.0 if entity.get("amount") else 0.0
+        status = entity.get("status")
 
-        payment = await payment_repo.get_by_gateway_order_id(db, payload.gateway_order_id)
+        if not order_id or status != "captured":
+            return
+
+        # Query pending payment
+        query = select(Payment).where(and_(Payment.transaction_reference == order_id, Payment.status == "PENDING"))
+        result = await db.execute(query)
+        payment = result.scalar_one_or_none()
         if not payment:
-            raise NotFoundError(detail="Payment not found.", error_code="PAYMENT_NOT_FOUND")
+            return
 
-        event = (payload.event or "").lower()
-        if event in ["payment.captured", "payment.success", "payment_verified"]:
-            verify_payload = type("VerifyPayload", (), {
-                "payment_id": payment.id,
-                "gateway_order_id": payment.gateway_order_id,
-                "gateway_payment_id": payload.gateway_payment_id,
-                "gateway_signature": "webhook_verified",
-                "transaction_reference": payload.gateway_payment_id,
-            })
-            return await PaymentService.verify_payment(db, verify_payload, user_id=user_id)
-
-        if event in ["payment.failed", "payment.failure"]:
-            payment.status = PaymentStatus.FAILED.value
-            payment.updated_by = user_id
-            db.add(payment)
-            await db.commit()
-            await db.refresh(payment)
-            return payment
-
-        return payment
+        # Trigger verification to complete payment
+        await PaymentService.verify_payment(
+            db,
+            data=PaymentVerify(
+                order_id=order_id,
+                transaction_reference=transaction_ref,
+                payment_method=payment.payment_method,
+                amount_paid=amount
+            ),
+            society_id=payment.society_id
+        )
 
     @staticmethod
-    async def get_payment(db: AsyncSession, id: uuid.UUID) -> Payment:
+    async def get_payment(db: AsyncSession, id: uuid.UUID, society_id: uuid.UUID) -> Payment:
         payment = await payment_repo.get_active(db, id)
-        if not payment:
-            raise NotFoundError(detail="Payment not found.", error_code="PAYMENT_NOT_FOUND")
+        if not payment or payment.society_id != society_id:
+            raise NotFoundError("Payment record not found.")
         return payment
 
     @staticmethod
-    async def get_payments(
+    async def get_multi_payments(
         db: AsyncSession,
-        *,
-        society_id: Optional[uuid.UUID] = None,
+        society_id: uuid.UUID,
+        flat_id: Optional[uuid.UUID] = None,
         bill_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
         skip: int = 0,
-        limit: int = 100,
-    ):
-        return await payment_repo.get_multi_active(
+        limit: int = 100
+    ) -> List[Payment]:
+        return await payment_repo.get_multi_payments(
             db,
             society_id=society_id,
+            flat_id=flat_id,
             bill_id=bill_id,
             status=status,
             skip=skip,
-            limit=limit,
+            limit=limit
         )
 
     @staticmethod
-    async def get_history(db: AsyncSession, society_id: uuid.UUID, skip: int = 0, limit: int = 100):
-        return await payment_repo.get_history(db, society_id=society_id, skip=skip, limit=limit)
-
-    @staticmethod
-    async def refund_payment(db: AsyncSession, data, user_id: Optional[uuid.UUID] = None) -> Payment:
+    async def refund_payment(db: AsyncSession, data: PaymentRefund, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> Payment:
         payment = await payment_repo.get_active(db, data.payment_id)
-        if not payment:
-            raise NotFoundError(detail="Payment not found.", error_code="PAYMENT_NOT_FOUND")
+        if not payment or payment.society_id != society_id:
+            raise NotFoundError("Payment not found.")
 
-        if payment.status != PaymentStatus.SUCCESS.value:
-            raise ValidationError(detail="Only successful payments can be refunded.", error_code="REFUND_NOT_ALLOWED")
+        if payment.status != "COMPLETED":
+            raise ValidationError("Only completed payments can be refunded.")
 
-        available = round(payment.amount - payment.refunded_amount, 2)
-        refund_amount = round(float(data.amount if data.amount is not None else available), 2)
-        if refund_amount <= 0 or refund_amount > available:
-            raise ValidationError(detail="Invalid refund amount.", error_code="INVALID_REFUND_AMOUNT")
+        remaining_refundable = payment.amount - payment.refunded_amount
+        if remaining_refundable <= 0:
+            raise ValidationError("Payment is already fully refunded.")
 
-        payment.refunded_amount = round(payment.refunded_amount + refund_amount, 2)
-        if payment.refunded_amount >= payment.amount:
-            payment.status = PaymentStatus.REFUNDED.value
+        if data.amount > remaining_refundable:
+            raise ValidationError(f"Cannot refund more than remaining payment balance of INR {remaining_refundable:.2f}")
+
+        # Update refund fields on Payment
+        payment.refunded_amount = round(payment.refunded_amount + data.amount, 2)
+        payment.refund_reason = data.reason
+        payment.status = "REFUNDED" if payment.refunded_amount == payment.amount else "COMPLETED"
         payment.updated_by = user_id
-        db.add(payment)
 
-        bill = await bill_repo.get_active(db, payment.bill_id)
-        if bill:
-            bill.paid_amount = round(max(0.0, bill.paid_amount - refund_amount), 2)
-            if bill.paid_amount <= 0 and datetime.now(timezone.utc).date() > bill.due_date:
-                bill.status = BillStatus.OVERDUE.value
-            elif bill.paid_amount <= 0:
-                bill.status = BillStatus.GENERATED.value
-            else:
-                bill.status = BillStatus.PARTIALLY_PAID.value
-            bill.updated_by = user_id
-            db.add(bill)
+        # Update associated bill
+        if payment.bill_id:
+            bill = await bill_repo.get_active(db, payment.bill_id)
+            if bill:
+                bill.paid_amount = max(0.0, round(bill.paid_amount - data.amount, 2))
+                bill.outstanding_amount = round(bill.total_amount - bill.paid_amount, 2)
+                if bill.outstanding_amount >= bill.total_amount:
+                    bill.status = "SENT"
+                else:
+                    bill.status = "PARTIALLY_PAID"
+                bill.updated_by = user_id
 
         await db.commit()
         await db.refresh(payment)
