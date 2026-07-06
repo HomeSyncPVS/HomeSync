@@ -19,3 +19,7 @@ from app.models.vendor import Vendor, VendorRating  # noqa
 from app.models.complaint import Complaint, ComplaintAttachment  # noqa
 from app.models.notice import Notice  # noqa
 from app.models.event import Event, EventRSVP  # noqa
+from app.models.family_member import FamilyMember  # noqa
+from app.models.vehicle import Vehicle  # noqa
+from app.models.emergency_contact import EmergencyContact  # noqa
+from app.models.notification import Notification  # noqa
