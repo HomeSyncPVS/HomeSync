@@ -8,6 +8,10 @@ from app.api.v1.bills import router as bills_router
 from app.api.v1.payments import router as payments_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.analytics import router as analytics_router
+from app.api.v1.vendors import router as vendors_router
+from app.api.v1.complaints import router as complaints_router
+from app.api.v1.notices import router as notices_router
+from app.api.v1.events import router as events_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router)
@@ -19,4 +23,7 @@ api_router.include_router(bills_router)
 api_router.include_router(payments_router)
 api_router.include_router(reports_router)
 api_router.include_router(analytics_router)
-
+api_router.include_router(vendors_router, prefix="/vendors", tags=["vendors"])
+api_router.include_router(complaints_router, prefix="/complaints", tags=["complaints"])
+api_router.include_router(notices_router, prefix="/notices", tags=["notices"])
+api_router.include_router(events_router, prefix="/events", tags=["events"])

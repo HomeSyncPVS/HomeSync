@@ -15,4 +15,7 @@ from app.models.floor import Floor  # noqa
 from app.models.flat import Flat  # noqa
 from app.models.bill import MaintenanceBill, BillItem  # noqa
 from app.models.payment import Payment, PaymentReceipt  # noqa
-
+from app.models.vendor import Vendor, VendorRating  # noqa
+from app.models.complaint import Complaint, ComplaintAttachment  # noqa
+from app.models.notice import Notice  # noqa
+from app.models.event import Event, EventRSVP  # noqa

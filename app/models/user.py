@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 import uuid
 from app.models.base import Base
 from app.models.role import Role
+from app.models.flat import Flat
 
 
 class User(Base):
@@ -29,6 +30,12 @@ class User(Base):
     society_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=True, index=True
     )
+    flat_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flats.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     profile_image_url: Mapped[str] = mapped_column(String(512), nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -50,3 +57,4 @@ class User(Base):
 
     # Relationships
     role: Mapped[Role] = relationship("Role", lazy="selectin")
+    flat: Mapped[Flat] = relationship("Flat", lazy="selectin", foreign_keys=[flat_id])

@@ -22,3 +22,9 @@ __pycache__/
 
 # Scratch Directory
 scratch/
+
+# Node Modules & Expo
+node_modules/
+.expo/
+web-build/
+dist/

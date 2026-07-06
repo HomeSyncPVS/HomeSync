@@ -6,6 +6,8 @@ class RoleEnum(str, Enum):
     ADMIN = "Admin"
     RESIDENT = "Resident"
     STAFF = "Staff"
+    SECRETARY = "Secretary"
+    CHAIRMAN = "Chairman"
 
 
 class PermissionEnum(str, Enum):

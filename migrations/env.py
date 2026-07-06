@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from app.core.config import settings
 from app.db.base import Base
+from app.db.database import resolved_url, connect_args
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -71,9 +72,9 @@ async def run_async_migrations() -> None:
 
     """
     connectable = create_async_engine(
-        settings.DATABASE_URL,
+        resolved_url,
         poolclass=pool.NullPool,
-        connect_args={"server_settings": {"search_path": "homesync"}},
+        connect_args=connect_args,
     )
 
     async with connectable.connect() as connection:

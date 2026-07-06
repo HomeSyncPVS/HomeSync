@@ -3,6 +3,11 @@ from typing import Any, Dict, List, Optional
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+from app.models.society import Society, SocietySettings
+from app.models.wing import Wing
+from app.models.floor import Floor
+from app.models.flat import Flat
 from app.core.config import settings
 from app.core.constants import RoleEnum, TokenType
 from app.core.security import (

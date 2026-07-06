@@ -3,7 +3,7 @@ import re
 from typing import Optional, List
 import uuid
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-from app.core.constants import OtpPurpose
+from app.core.constants import OtpPurpose, RoleEnum
 from app.schemas.role import RoleResponse
 
 
@@ -26,7 +26,25 @@ class RegisterRequest(BaseModel):
     phone: Optional[str] = Field(None, pattern=r"^\+?[1-9]\d{1,14}$", description="E.164 phone format")
     password: str
     full_name: str = Field(..., min_length=2, max_length=100)
+    role: RoleEnum = Field(default=RoleEnum.RESIDENT, description="Selected role (Resident, Secretary, Chairman)")
     society_id: Optional[uuid.UUID] = None
+    
+    # Optional fields for entering new/existing Society details
+    society_name: Optional[str] = Field(None, max_length=255)
+    society_address: Optional[str] = Field(None, max_length=512)
+    society_region: Optional[str] = Field(None, max_length=100)
+    society_city: Optional[str] = Field(None, max_length=100)
+    society_state: Optional[str] = Field(None, max_length=100)
+    society_pincode: Optional[str] = Field(None, pattern=r"^\d{6}$")
+    society_phone: Optional[str] = Field(None, max_length=50)
+    society_email: Optional[str] = Field(None, max_length=255)
+
+    # Optional fields for Resident's Flat details
+    flat_number: Optional[str] = Field(None, max_length=50)
+    flat_type: Optional[str] = Field(None, max_length=50)
+    flat_size: Optional[float] = None
+    wing_name: Optional[str] = Field(None, max_length=50)
+    floor_number: Optional[int] = None
 
     @field_validator("password")
     @classmethod
@@ -43,6 +61,7 @@ class UserResponse(BaseModel):
     full_name: str
     role_id: uuid.UUID
     society_id: Optional[uuid.UUID] = None
+    flat_id: Optional[uuid.UUID] = None
     profile_image_url: Optional[str] = None
     is_active: bool
     is_verified: bool
