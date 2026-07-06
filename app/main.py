@@ -5,12 +5,12 @@ from fastapi import FastAPI, Request, status, Response
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.constants import RoleEnum, PermissionEnum
-from app.db.database import AsyncSessionLocal
+from app.db.database import AsyncSessionLocal, init_database
 from app.db.base import Base
 from app.models.role import Role
 from app.models.permission import Permission
@@ -26,8 +26,11 @@ logger = logging.getLogger("homesync.main")
 
 async def seed_database():
     """
-    Seeds permissions and roles on application startup.
+    Seeds database tables and default roles/permissions on startup.
     """
+    # 0. Automatically create database, schemas, and tables if not already present
+    await init_database()
+
     logger.info("Checking & seeding default roles and permissions...")
     async with AsyncSessionLocal() as db:
         try:
@@ -231,6 +234,50 @@ async def root():
         "app": settings.PROJECT_NAME,
         "status": "healthy",
         "docs": "/docs"
+    }
+
+
+@app.get("/health", tags=["Root"])
+async def health_check():
+    """
+    Checks the connectivity and status of database and Redis cache.
+    """
+    # 1. Check Database Status
+    db_status = "disconnected"
+    db_latency_ms = None
+    try:
+        start_time = datetime.now()
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        db_latency_ms = round((datetime.now() - start_time).total_seconds() * 1000.0, 2)
+        db_status = "connected"
+    except Exception as e:
+        db_status = f"unhealthy: {str(e)}"
+
+    # 2. Check Redis Status
+    redis_status = "disabled"
+    if settings.USE_REDIS:
+        try:
+            from app.core.redis import check_redis_connection
+            is_connected = await check_redis_connection()
+            redis_status = "connected" if is_connected else "disconnected"
+        except Exception as e:
+            redis_status = f"unhealthy: {str(e)}"
+
+    # 3. Overall Status
+    is_healthy = db_status == "connected" and (not settings.USE_REDIS or redis_status == "connected")
+    
+    return {
+        "status": "healthy" if is_healthy else "unhealthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "database": {
+            "status": db_status,
+            "latency_ms": db_latency_ms
+        },
+        "redis": {
+            "status": redis_status
+        },
+        "environment": settings.ENVIRONMENT
     }
 
 

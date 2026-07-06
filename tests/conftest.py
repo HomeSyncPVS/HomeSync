@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from app.core.config import settings
+settings.SUPABASE_URL = "https://mock.supabase.co"
 from app.core.constants import RoleEnum, PermissionEnum
 from app.db.session import get_db
 from app.models.role import Role
@@ -14,11 +15,16 @@ from app.main import app
 
 from sqlalchemy import pool
 
-# Create test engine pointing to the same homesync schema
+from app.db.database import resolved_url, connect_args
+
+# Create test engine pointing to the same homesync schema with resolved URL and SSL context
+test_connect_args = connect_args.copy()
+test_connect_args["server_settings"] = {"search_path": "homesync"}
+
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    resolved_url,
     poolclass=pool.NullPool,
-    connect_args={"server_settings": {"search_path": "homesync"}},
+    connect_args=test_connect_args,
 )
 TestingSessionLocal = async_sessionmaker(
     bind=engine,
@@ -116,19 +122,29 @@ from app.models.session import Session
 from app.models.device import Device
 from app.models.email_verification import EmailVerification
 from app.models.password_reset import PasswordReset
+from app.models.flat import Flat
+from app.models.floor import Floor
+from app.models.wing import Wing
+from app.models.society import Society, SocietySettings
 
 
 async def clean_test_db(db: AsyncSession):
     """
     Cleans up the database tables sequentially to prevent foreign key errors.
     """
+    await db.execute(delete(Flat))
+    await db.execute(delete(Floor))
+    await db.execute(delete(Wing))
+    await db.execute(delete(SocietySettings))
     await db.execute(delete(Session))
     await db.execute(delete(Device))
     await db.execute(delete(EmailVerification))
     await db.execute(delete(PasswordReset))
     await db.execute(delete(OtpCode))
+    await db.execute(delete(Society))
     await db.execute(delete(User))
     await db.commit()
+
 
 
 @pytest.fixture(scope="function", autouse=True)
