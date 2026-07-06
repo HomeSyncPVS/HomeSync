@@ -29,6 +29,9 @@ class UserService:
         if data.society_id is not None:
             user.society_id = data.society_id
 
+        if data.flat_id is not None:
+            user.flat_id = data.flat_id
+
         db.add(user)
         await db.flush()
         return user

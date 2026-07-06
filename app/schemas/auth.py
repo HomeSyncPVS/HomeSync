@@ -65,6 +65,7 @@ class UserResponse(BaseModel):
     profile_image_url: Optional[str] = None
     is_active: bool
     is_verified: bool
+    approval_status: str
     created_at: datetime
 
 
@@ -147,6 +148,7 @@ class UserUpdateRequest(BaseModel):
     full_name: Optional[str] = Field(None, min_length=2, max_length=100)
     phone: Optional[str] = Field(None, pattern=r"^\+?[1-9]\d{1,14}$")
     society_id: Optional[uuid.UUID] = None
+    flat_id: Optional[uuid.UUID] = None
 
 
 class TokenValidationResponse(BaseModel):

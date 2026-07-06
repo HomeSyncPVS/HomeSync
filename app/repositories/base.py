@@ -58,6 +58,7 @@ class BaseRepository(Generic[ModelType]):
 
         db.add(db_obj)
         await db.flush()
+        await db.refresh(db_obj)
         return db_obj
 
     async def delete(self, db: AsyncSession, *, id: Any) -> Optional[ModelType]:

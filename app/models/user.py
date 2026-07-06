@@ -40,6 +40,7 @@ class User(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    approval_status: Mapped[str] = mapped_column(String(50), default="PENDING", nullable=False)
     login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -58,3 +59,12 @@ class User(Base):
     # Relationships
     role: Mapped[Role] = relationship("Role", lazy="selectin")
     flat: Mapped[Flat] = relationship("Flat", lazy="selectin", foreign_keys=[flat_id])
+    family_members: Mapped[list["FamilyMember"]] = relationship(
+        "FamilyMember", back_populates="user", cascade="all, delete-orphan", lazy="selectin"
+    )
+    vehicles: Mapped[list["Vehicle"]] = relationship(
+        "Vehicle", back_populates="user", cascade="all, delete-orphan", lazy="selectin"
+    )
+    notifications: Mapped[list["Notification"]] = relationship(
+        "Notification", back_populates="user", cascade="all, delete-orphan", lazy="selectin"
+    )
