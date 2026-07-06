@@ -38,3 +38,38 @@ class TokenType(str, Enum):
     REFRESH = "refresh"
     EMAIL_VERIFICATION = "email_verification"
     PASSWORD_RESET = "password_reset"
+
+
+class BillStatus(str, Enum):
+    DRAFT = "DRAFT"
+    GENERATED = "GENERATED"
+    SENT = "SENT"
+    PARTIALLY_PAID = "PARTIALLY_PAID"
+    PAID = "PAID"
+    OVERDUE = "OVERDUE"
+    CANCELLED = "CANCELLED"
+
+
+class BillType(str, Enum):
+    MAINTENANCE = "MAINTENANCE"
+    WATER = "WATER"
+    PARKING = "PARKING"
+    OTHER = "OTHER"
+
+
+class PaymentStatus(str, Enum):
+    CREATED = "CREATED"
+    PENDING = "PENDING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    REFUNDED = "REFUNDED"
+
+
+class PaymentMethod(str, Enum):
+    UPI = "UPI"
+    CARD = "CARD"
+    NETBANKING = "NETBANKING"
+    WALLET = "WALLET"
+    CASH = "CASH"
+    CHEQUE = "CHEQUE"
+    ONLINE_GATEWAY = "ONLINE_GATEWAY"

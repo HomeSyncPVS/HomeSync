@@ -9,6 +9,7 @@ from app.core.config import settings
 settings.SUPABASE_URL = "https://mock.supabase.co"
 from app.core.constants import RoleEnum, PermissionEnum
 from app.db.session import get_db
+from app.db.base import Base
 from app.models.role import Role
 from app.models.permission import Permission
 from app.main import app
@@ -115,7 +116,7 @@ async def seed_test_db(db: AsyncSession):
     await db.commit()
 
 
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 from app.models.user import User
 from app.models.otp import OtpCode
 from app.models.session import Session
@@ -126,12 +127,26 @@ from app.models.flat import Flat
 from app.models.floor import Floor
 from app.models.wing import Wing
 from app.models.society import Society, SocietySettings
+from app.models.bill import MaintenanceBill, BillItem
+from app.models.payment import Payment, PaymentReceipt
 
 
 async def clean_test_db(db: AsyncSession):
     """
     Cleans up the database tables sequentially to prevent foreign key errors.
     """
+    async def _table_exists(table_name: str) -> bool:
+        result = await db.execute(text("SELECT to_regclass(:name)"), {"name": table_name})
+        return result.scalar_one_or_none() is not None
+
+    if await _table_exists("payment_receipts"):
+        await db.execute(delete(PaymentReceipt))
+    if await _table_exists("payments"):
+        await db.execute(delete(Payment))
+    if await _table_exists("bill_items"):
+        await db.execute(delete(BillItem))
+    if await _table_exists("maintenance_bills"):
+        await db.execute(delete(MaintenanceBill))
     await db.execute(delete(Flat))
     await db.execute(delete(Floor))
     await db.execute(delete(Wing))
@@ -152,6 +167,9 @@ async def db() -> AsyncGenerator[AsyncSession, None]:
     """
     Test DB session fixture for assertions.
     """
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     async with TestingSessionLocal() as session:
         # Seed default data
         await seed_test_db(session)

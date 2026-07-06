@@ -13,4 +13,6 @@ from app.models.society import Society, SocietySettings  # noqa
 from app.models.wing import Wing  # noqa
 from app.models.floor import Floor  # noqa
 from app.models.flat import Flat  # noqa
+from app.models.bill import MaintenanceBill, BillItem  # noqa
+from app.models.payment import Payment, PaymentReceipt  # noqa
 

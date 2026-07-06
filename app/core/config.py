@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional
-from pydantic import AnyHttpUrl, EmailStr, field_validator
+from pydantic import AnyHttpUrl, EmailStr, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str = "HomeSync Authentication Service"
     API_V1_STR: str = "/api/v1"
-    SECRET_KEY: str
+    SECRET_KEY: Optional[str] = Field(default=None, validate_default=True)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
@@ -73,6 +73,21 @@ class Settings(BaseSettings):
     EMAILS_FROM_NAME: Optional[str] = None
 
     ENVIRONMENT: str = "development"
+
+    @field_validator("SECRET_KEY")
+    @classmethod
+    def validate_secret_key(cls, v: Optional[str]) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "SECRET_KEY is missing. Set SECRET_KEY in environment variables (for example in .env)."
+            )
+
+        key = v.strip()
+        if len(key.encode("utf-8")) < 32:
+            raise ValueError(
+                "SECRET_KEY must be at least 32 bytes long for HS256. Use a 64+ character random value."
+            )
+        return key
 
 
 settings = Settings()
