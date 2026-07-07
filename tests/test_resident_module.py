@@ -33,7 +33,7 @@ async def get_auth_headers(client: AsyncClient, db, email: str, role_name: str, 
         society_id=society_id,
         is_active=True,
         is_verified=True,
-        approval_status="APPROVED" if role_name in [RoleEnum.SUPER_ADMIN.value, RoleEnum.ADMIN.value] else "PENDING",
+        approval_status="APPROVED" if role_name in [RoleEnum.SUPER_ADMIN.value, RoleEnum.SOCIETY_ADMIN.value] else "PENDING",
     )
     db.add(user)
     await db.commit()
@@ -109,7 +109,7 @@ async def test_resident_registration_and_approval(client: AsyncClient, db):
 
     # 3. Create Admin for Society A
     admin_headers, admin_user = await get_auth_headers(
-        client, db, "admin-sunset@society.com", RoleEnum.ADMIN.value, society_id=society.id
+        client, db, "admin-sunset@society.com", RoleEnum.SOCIETY_ADMIN.value, society_id=society.id
     )
 
     # 4. Search Residents (Pending)
@@ -305,7 +305,7 @@ async def test_emergency_contacts_and_notifications(client: AsyncClient, db):
     await db.commit()
 
     admin_headers, admin_user = await get_auth_headers(
-        client, db, "admin-willow@society.com", RoleEnum.ADMIN.value, society_id=society.id
+        client, db, "admin-willow@society.com", RoleEnum.SOCIETY_ADMIN.value, society_id=society.id
     )
     resident_headers, resident_user = await get_auth_headers(
         client, db, "res-willow@society.com", RoleEnum.RESIDENT.value, society_id=society.id

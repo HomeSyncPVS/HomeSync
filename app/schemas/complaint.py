@@ -33,7 +33,6 @@ class ComplaintUpdate(BaseModel):
     category: Optional[str] = Field(None, max_length=100)
     priority: Optional[str] = Field(None, max_length=50)
     status: Optional[str] = Field(None, max_length=50)
-    vendor_id: Optional[uuid.UUID] = None
     location: Optional[str] = Field(None, max_length=255)
     estimated_resolution_date: Optional[datetime] = None
 
@@ -45,7 +44,6 @@ class ComplaintResponse(ComplaintBase):
     complaint_number: str
     society_id: uuid.UUID
     user_id: uuid.UUID
-    vendor_id: Optional[uuid.UUID] = None
     status: str
     estimated_resolution_date: Optional[datetime] = None
     resolved_at: Optional[datetime] = None

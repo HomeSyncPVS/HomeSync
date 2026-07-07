@@ -26,7 +26,7 @@ class RegisterRequest(BaseModel):
     phone: Optional[str] = Field(None, pattern=r"^\+?[1-9]\d{1,14}$", description="E.164 phone format")
     password: str
     full_name: str = Field(..., min_length=2, max_length=100)
-    role: RoleEnum = Field(default=RoleEnum.RESIDENT, description="Selected role (Resident, Secretary, Chairman)")
+    role: RoleEnum = Field(default=RoleEnum.RESIDENT, description="Selected role (Resident, Society Admin, Committee Member)")
     society_id: Optional[uuid.UUID] = None
     
     # Optional fields for entering new/existing Society details

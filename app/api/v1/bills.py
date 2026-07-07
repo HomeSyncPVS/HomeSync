@@ -3,7 +3,8 @@ from typing import List, Optional
 from datetime import date
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy import select, and_
+from app.models.bill import MaintenanceBill
 from app.api.deps import get_db, get_current_active_user
 from app.exceptions.custom import ForbiddenError, ValidationError
 from app.models.user import User
@@ -14,9 +15,9 @@ from app.services.bill import BillService
 router = APIRouter(prefix="/bills", tags=["Maintenance Bills"])
 
 
-def require_admin_or_treasurer(user: User = Depends(get_current_active_user)) -> User:
-    if user.role.name not in ["Super Admin", "Admin", "Treasurer"]:
-        raise ForbiddenError(detail="Only Society Admin, Treasurer, or Super Admin can perform this action.")
+def require_society_admin(user: User = Depends(get_current_active_user)) -> User:
+    if user.role.name not in ["Super Admin", "Society Admin"]:
+        raise ForbiddenError(detail="Only Society Admin or Super Admin can perform this action.")
     return user
 
 
@@ -38,10 +39,11 @@ def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None
 )
 async def create_bill(
     data: BillCreate,
+    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
-    society_id = get_user_society_id(user)
+    society_id = get_user_society_id(user, query_society_id)
     return await BillService.create_bill(db, data, society_id, user_id=user.id)
 
 
@@ -52,13 +54,13 @@ async def create_bill(
 )
 async def bulk_generate_bills(
     data: BulkBillGenerate,
+    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
-    society_id = get_user_society_id(user)
+    society_id = get_user_society_id(user, query_society_id)
     count = await BillService.bulk_generate_bills(db, data, society_id, user_id=user.id)
     return SuccessResponse(message=f"Successfully generated {count} bills in draft mode.")
-
 
 @router.get(
     "",
@@ -165,10 +167,11 @@ async def get_bill(
 async def update_bill(
     id: uuid.UUID,
     data: BillUpdate,
+    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
-    society_id = get_user_society_id(user)
+    society_id = get_user_society_id(user, query_society_id)
     return await BillService.update_bill(db, id, data, society_id, user_id=user.id)
 
 
@@ -179,10 +182,11 @@ async def update_bill(
 )
 async def delete_bill(
     id: uuid.UUID,
+    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
-    society_id = get_user_society_id(user)
+    society_id = get_user_society_id(user, query_society_id)
     await BillService.delete_bill(db, id, society_id)
     return SuccessResponse(message="Bill deleted successfully.")
 
@@ -194,10 +198,11 @@ async def delete_bill(
 )
 async def send_bill(
     id: uuid.UUID,
+    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
-    society_id = get_user_society_id(user)
+    society_id = get_user_society_id(user, query_society_id)
     return await BillService.send_bill(db, id, society_id, user_id=user.id)
 
 
@@ -207,9 +212,10 @@ async def send_bill(
     summary="Manually trigger late fees scan"
 )
 async def trigger_late_fees(
+    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
-    society_id = get_user_society_id(user)
+    society_id = get_user_society_id(user, query_society_id)
     count = await BillService.apply_late_fees_if_overdue(db, society_id)
     return SuccessResponse(message=f"Late fees scan completed. Applied late fees to {count} overdue bills.")

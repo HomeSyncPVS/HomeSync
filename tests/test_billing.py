@@ -94,22 +94,19 @@ async def test_billing_payment_reports_analytics_flow(client: AsyncClient, db):
     bill_res = await client.post(
         "/api/v1/bills",
         json={
-            "society_id": society_id,
             "flat_id": flat_id,
-            "bill_type": "MAINTENANCE",
-            "billing_period": "2026-07",
-            "issue_date": "2026-07-01",
-            "due_date": "2026-07-10",
+            "bill_type": "MONTHLY",
+            "billing_period_start": "2026-07-01",
+            "billing_period_end": "2026-07-31",
+            "due_date": "2026-07-10T12:00:00Z",
             "items": [
                 {
-                    "title": "Maintenance",
-                    "quantity": 1,
-                    "unit_price": 2500.0,
+                    "name": "Maintenance",
+                    "amount": 2500.0,
                 },
                 {
-                    "title": "Water",
-                    "quantity": 1,
-                    "unit_price": 500.0,
+                    "name": "Water",
+                    "amount": 500.0,
                 },
             ],
         },
@@ -124,24 +121,25 @@ async def test_billing_payment_reports_analytics_flow(client: AsyncClient, db):
     create_order_res = await client.post(
         "/api/v1/payments/create-order",
         json={
-            "bill_id": bill_id,
-            "method": "UPI",
+            "bill_id": str(bill_id),
+            "payment_method": "UPI",
         },
         headers=super_headers,
     )
     assert create_order_res.status_code == 200, create_order_res.text
-    payment_id = create_order_res.json()["payment_id"]
+    order_id = create_order_res.json()["order_id"]
 
     verify_res = await client.post(
         "/api/v1/payments/verify",
         json={
-            "payment_id": payment_id,
+            "order_id": order_id,
             "transaction_reference": f"TXN-{uuid.uuid4().hex[:8]}",
+            "payment_method": "UPI",
         },
         headers=super_headers,
     )
     assert verify_res.status_code == 200, verify_res.text
-    assert verify_res.json()["status"] == "SUCCESS"
+    assert verify_res.json()["status"] == "COMPLETED"
 
     bill_get_res = await client.get(f"/api/v1/bills/{bill_id}", headers=super_headers)
     assert bill_get_res.status_code == 200
@@ -152,14 +150,14 @@ async def test_billing_payment_reports_analytics_flow(client: AsyncClient, db):
         headers=super_headers,
     )
     assert billing_report_res.status_code == 200, billing_report_res.text
-    assert billing_report_res.json()["summary"]["total_billed"] >= 3000.0
+    assert sum(b["total_amount"] for b in billing_report_res.json()) >= 3000.0
 
     payments_report_res = await client.get(
         f"/api/v1/reports/payments?society_id={society_id}",
         headers=super_headers,
     )
     assert payments_report_res.status_code == 200, payments_report_res.text
-    assert payments_report_res.json()["count"] >= 1
+    assert len(payments_report_res.json()) >= 1
 
     revenue_report_res = await client.get(
         f"/api/v1/reports/revenue?society_id={society_id}",
@@ -185,7 +183,7 @@ async def test_billing_payment_reports_analytics_flow(client: AsyncClient, db):
         headers=super_headers,
     )
     assert dashboard_res.status_code == 200, dashboard_res.text
-    assert dashboard_res.json()["total_bills"] >= 1
+    assert dashboard_res.json()["total_bills_generated"] >= 1
 
     outstanding_res = await client.get(
         f"/api/v1/analytics/outstanding?society_id={society_id}",

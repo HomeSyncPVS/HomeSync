@@ -26,17 +26,11 @@ class Complaint(Base):
         nullable=False,
         index=True,
     )
-    vendor_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("vendors.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     priority: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(50), default="RAISED", nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(50), default="OPEN", nullable=False, index=True)
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     estimated_resolution_date: Mapped[Optional[datetime]] = mapped_column(
@@ -63,7 +57,6 @@ class Complaint(Base):
     # Relationships
     society = relationship("Society")
     user = relationship("User")
-    vendor = relationship("Vendor")
     attachments: Mapped[List["ComplaintAttachment"]] = relationship(
         "ComplaintAttachment", back_populates="complaint", cascade="all, delete-orphan"
     )

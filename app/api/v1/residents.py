@@ -110,11 +110,11 @@ async def get_resident(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    if current_user.role.name not in ["Super Admin", "Admin"] and current_user.id != resident_id:
+    if current_user.role.name not in ["Super Admin", "Society Admin"] and current_user.id != resident_id:
         raise ForbiddenError(detail="Access denied: You can only view your own profile.")
 
     resident = await ResidentService.get_resident_profile(db, resident_id)
-    if current_user.role.name == "Admin" and resident.society_id != current_user.society_id:
+    if current_user.role.name == "Society Admin" and resident.society_id != current_user.society_id:
         raise ForbiddenError(detail="Access denied: Resident belongs to another society.")
 
     return resident
@@ -131,14 +131,14 @@ async def update_resident(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    if current_user.role.name not in ["Super Admin", "Admin"] and current_user.id != resident_id:
+    if current_user.role.name not in ["Super Admin", "Society Admin"] and current_user.id != resident_id:
         raise ForbiddenError(detail="Access denied: You can only update your own profile.")
 
     user = await user_repo.get(db, resident_id)
     if not user:
         raise NotFoundError(detail="Resident not found.")
 
-    if current_user.role.name == "Admin" and user.society_id != current_user.society_id:
+    if current_user.role.name == "Society Admin" and user.society_id != current_user.society_id:
         raise ForbiddenError(detail="Access denied: Resident belongs to another society.")
 
     updated_user = await UserService.update_profile(db, user, data)
@@ -159,7 +159,7 @@ async def delete_resident(
     if not user:
         raise NotFoundError(detail="Resident not found.")
 
-    if current_user.role.name == "Admin" and user.society_id != current_user.society_id:
+    if current_user.role.name == "Society Admin" and user.society_id != current_user.society_id:
         raise ForbiddenError(detail="Access denied: Resident belongs to another society.")
 
     await UserService.delete_user_account(db, user)
@@ -181,7 +181,7 @@ async def approve_resident(
     if not resident:
         raise NotFoundError(detail="Resident not found.")
 
-    if current_user.role.name == "Admin" and resident.society_id != current_user.society_id:
+    if current_user.role.name == "Society Admin" and resident.society_id != current_user.society_id:
         raise ForbiddenError(detail="Access denied: Resident belongs to another society.")
 
     updated_resident = await ResidentService.approve_resident(

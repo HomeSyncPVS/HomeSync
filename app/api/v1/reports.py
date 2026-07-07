@@ -17,9 +17,9 @@ from app.services.report import ReportService
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
-def require_admin_or_treasurer(user: User = Depends(get_current_active_user)) -> User:
-    if user.role.name not in ["Super Admin", "Admin", "Treasurer"]:
-        raise ForbiddenError(detail="Only Society Admin, Treasurer, or Super Admin can perform this action.")
+def require_society_admin(user: User = Depends(get_current_active_user)) -> User:
+    if user.role.name not in ["Super Admin", "Society Admin"]:
+        raise ForbiddenError(detail="Only Society Admin or Super Admin can perform this action.")
     return user
 
 
@@ -41,7 +41,7 @@ def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None
 async def get_billing_report(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     return await ReportService.get_billing_report(db, society_id)
@@ -55,7 +55,7 @@ async def get_billing_report(
 async def get_payment_report(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     return await ReportService.get_payment_report(db, society_id)
@@ -69,7 +69,7 @@ async def get_payment_report(
 async def get_revenue_report(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     return await ReportService.get_revenue_report(db, society_id)
@@ -83,7 +83,7 @@ async def get_revenue_report(
 async def get_outstanding_report(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     return await ReportService.get_outstanding_report(db, society_id)
@@ -96,7 +96,7 @@ async def get_outstanding_report(
 async def export_pdf(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     pdf_bytes = await ReportService.export_pdf(db, society_id)
@@ -115,7 +115,7 @@ async def export_pdf(
 async def export_excel(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     excel_bytes = await ReportService.export_excel(db, society_id)
@@ -134,7 +134,7 @@ async def export_excel(
 async def export_csv(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     csv_str = await ReportService.export_csv(db, society_id)

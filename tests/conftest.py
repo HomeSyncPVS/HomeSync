@@ -1,5 +1,9 @@
 import asyncio
 from typing import AsyncGenerator
+from unittest.mock import patch
+# Mock SMTP globally for tests
+patch("app.utils.email.send_email").start()
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -69,22 +73,48 @@ async def seed_test_db(db: AsyncSession):
     else:
         resident_role.permissions = [db_perms[PermissionEnum.RESIDENT_ACCESS.value]]
 
-    # Admin Role
+    # Committee Member Role
     result = await db.execute(
         select(Role)
-        .where(Role.name == RoleEnum.ADMIN.value)
+        .where(Role.name == RoleEnum.COMMITTEE_MEMBER.value)
+        .options(selectinload(Role.permissions))
+    )
+    committee_role = result.scalar_one_or_none()
+    if not committee_role:
+        committee_role = Role(
+            name=RoleEnum.COMMITTEE_MEMBER.value,
+            description="Committee Member Role",
+            permissions=[
+                db_perms[PermissionEnum.RESIDENT_ACCESS.value],
+                db_perms[PermissionEnum.VIEW_SOCIETY.value],
+                db_perms[PermissionEnum.MANAGE_SOCIETY.value],
+            ],
+        )
+        db.add(committee_role)
+    else:
+        committee_role.permissions = [
+            db_perms[PermissionEnum.RESIDENT_ACCESS.value],
+            db_perms[PermissionEnum.VIEW_SOCIETY.value],
+            db_perms[PermissionEnum.MANAGE_SOCIETY.value],
+        ]
+
+    # Society Admin Role
+    result = await db.execute(
+        select(Role)
+        .where(Role.name == RoleEnum.SOCIETY_ADMIN.value)
         .options(selectinload(Role.permissions))
     )
     admin_role = result.scalar_one_or_none()
     if not admin_role:
         admin_role = Role(
-            name=RoleEnum.ADMIN.value,
-            description="Admin Role",
+            name=RoleEnum.SOCIETY_ADMIN.value,
+            description="Society Admin Role",
             permissions=[
                 db_perms[PermissionEnum.VIEW_USERS.value],
                 db_perms[PermissionEnum.RESIDENT_ACCESS.value],
                 db_perms[PermissionEnum.MANAGE_DEVICES.value],
                 db_perms[PermissionEnum.VIEW_SOCIETY.value],
+                db_perms[PermissionEnum.MANAGE_SOCIETY.value],
             ],
         )
         db.add(admin_role)
@@ -94,6 +124,7 @@ async def seed_test_db(db: AsyncSession):
             db_perms[PermissionEnum.RESIDENT_ACCESS.value],
             db_perms[PermissionEnum.MANAGE_DEVICES.value],
             db_perms[PermissionEnum.VIEW_SOCIETY.value],
+            db_perms[PermissionEnum.MANAGE_SOCIETY.value],
         ]
 
     # Super Admin Role

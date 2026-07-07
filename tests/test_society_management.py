@@ -147,7 +147,7 @@ async def test_tenant_isolation_and_rbac(client: AsyncClient, db):
 
     # Create Admin for Society A, and Resident for Society A
     admin_a_headers, _ = await get_auth_headers(
-        client, db, "admin-a@society.com", RoleEnum.ADMIN.value, society_id=society_a_id
+        client, db, "admin-a@society.com", RoleEnum.SOCIETY_ADMIN.value, society_id=society_a_id
     )
     resident_a_headers, _ = await get_auth_headers(
         client, db, "resident-a@society.com", RoleEnum.RESIDENT.value, society_id=society_a_id

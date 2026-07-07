@@ -18,9 +18,9 @@ from app.services.analytics import AnalyticsService
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
-def require_admin_or_treasurer(user: User = Depends(get_current_active_user)) -> User:
-    if user.role.name not in ["Super Admin", "Admin", "Treasurer"]:
-        raise ForbiddenError(detail="Only Society Admin, Treasurer, or Super Admin can perform this action.")
+def require_society_admin(user: User = Depends(get_current_active_user)) -> User:
+    if user.role.name not in ["Super Admin", "Society Admin"]:
+        raise ForbiddenError(detail="Only Society Admin or Super Admin can perform this action.")
     return user
 
 
@@ -42,7 +42,7 @@ def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None
 async def get_dashboard_stats(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     return await AnalyticsService.get_dashboard_stats(db, society_id)
@@ -56,7 +56,7 @@ async def get_dashboard_stats(
 async def get_revenue_analytics(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     return await AnalyticsService.get_revenue_analytics(db, society_id)
@@ -70,7 +70,7 @@ async def get_revenue_analytics(
 async def get_payments_analytics(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     return await AnalyticsService.get_payments_analytics(db, society_id)
@@ -84,7 +84,7 @@ async def get_payments_analytics(
 async def get_collections_analytics(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     return await AnalyticsService.get_collections_analytics(db, society_id)
@@ -98,7 +98,7 @@ async def get_collections_analytics(
 async def get_outstanding_analytics(
     query_society_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user, query_society_id)
     return await AnalyticsService.get_outstanding_analytics(db, society_id)

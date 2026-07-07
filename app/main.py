@@ -66,48 +66,52 @@ async def seed_database():
             else:
                 resident_role.permissions = [db_perms[PermissionEnum.RESIDENT_ACCESS.value]]
 
-            # 3. Seed Staff role
-            query = select(Role).where(Role.name == RoleEnum.STAFF.value).options(selectinload(Role.permissions))
+            # 3. Seed Committee Member role
+            query = select(Role).where(Role.name == RoleEnum.COMMITTEE_MEMBER.value).options(selectinload(Role.permissions))
             result = await db.execute(query)
-            staff_role = result.scalar_one_or_none()
-            if not staff_role:
-                staff_role = Role(
-                    name=RoleEnum.STAFF.value,
-                    description="Staff or utility employee.",
+            committee_role = result.scalar_one_or_none()
+            if not committee_role:
+                committee_role = Role(
+                    name=RoleEnum.COMMITTEE_MEMBER.value,
+                    description="Committee member of the society.",
                     permissions=[
                         db_perms[PermissionEnum.RESIDENT_ACCESS.value],
-                        db_perms[PermissionEnum.MANAGE_DEVICES.value],
+                        db_perms[PermissionEnum.VIEW_SOCIETY.value],
+                        db_perms[PermissionEnum.MANAGE_SOCIETY.value],
                     ],
                 )
-                db.add(staff_role)
+                db.add(committee_role)
             else:
-                staff_role.permissions = [
+                committee_role.permissions = [
                     db_perms[PermissionEnum.RESIDENT_ACCESS.value],
-                    db_perms[PermissionEnum.MANAGE_DEVICES.value],
+                    db_perms[PermissionEnum.VIEW_SOCIETY.value],
+                    db_perms[PermissionEnum.MANAGE_SOCIETY.value],
                 ]
 
-            # 4. Seed Admin role
-            query = select(Role).where(Role.name == RoleEnum.ADMIN.value).options(selectinload(Role.permissions))
+            # 4. Seed Society Admin role
+            query = select(Role).where(Role.name == RoleEnum.SOCIETY_ADMIN.value).options(selectinload(Role.permissions))
             result = await db.execute(query)
-            admin_role = result.scalar_one_or_none()
-            if not admin_role:
-                admin_role = Role(
-                    name=RoleEnum.ADMIN.value,
+            society_admin_role = result.scalar_one_or_none()
+            if not society_admin_role:
+                society_admin_role = Role(
+                    name=RoleEnum.SOCIETY_ADMIN.value,
                     description="Property group administrator.",
                     permissions=[
                         db_perms[PermissionEnum.VIEW_USERS.value],
                         db_perms[PermissionEnum.RESIDENT_ACCESS.value],
                         db_perms[PermissionEnum.MANAGE_DEVICES.value],
                         db_perms[PermissionEnum.VIEW_SOCIETY.value],
+                        db_perms[PermissionEnum.MANAGE_SOCIETY.value],
                     ],
                 )
-                db.add(admin_role)
+                db.add(society_admin_role)
             else:
-                admin_role.permissions = [
+                society_admin_role.permissions = [
                     db_perms[PermissionEnum.VIEW_USERS.value],
                     db_perms[PermissionEnum.RESIDENT_ACCESS.value],
                     db_perms[PermissionEnum.MANAGE_DEVICES.value],
                     db_perms[PermissionEnum.VIEW_SOCIETY.value],
+                    db_perms[PermissionEnum.MANAGE_SOCIETY.value],
                 ]
 
             # 5. Seed Super Admin role

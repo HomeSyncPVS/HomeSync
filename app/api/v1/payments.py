@@ -21,9 +21,9 @@ from app.services.payment import PaymentService
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
 
-def require_admin_or_treasurer(user: User = Depends(get_current_active_user)) -> User:
-    if user.role.name not in ["Super Admin", "Admin", "Treasurer"]:
-        raise ForbiddenError(detail="Only Society Admin, Treasurer, or Super Admin can perform this action.")
+def require_society_admin(user: User = Depends(get_current_active_user)) -> User:
+    if user.role.name not in ["Super Admin", "Society Admin"]:
+        raise ForbiddenError(detail="Only Society Admin or Super Admin can perform this action.")
     return user
 
 
@@ -164,7 +164,7 @@ async def get_payment(
 async def refund_payment(
     data: PaymentRefund,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin_or_treasurer)
+    user: User = Depends(require_society_admin)
 ):
     society_id = get_user_society_id(user)
     return await PaymentService.refund_payment(db, data, society_id, user_id=user.id)

@@ -385,7 +385,7 @@ async def terminate_session(
         raise NotFoundError(detail="Session not found.")
         
     # Security access check
-    if session.user_id != current_user.id and current_user.role.name not in (RoleEnum.SUPER_ADMIN.value, RoleEnum.ADMIN.value):
+    if session.user_id != current_user.id and current_user.role.name not in (RoleEnum.SUPER_ADMIN.value, RoleEnum.SOCIETY_ADMIN.value):
         raise ForbiddenError(detail="Access denied to terminate this session.")
         
     await session_repo.revoke_session(db, id)

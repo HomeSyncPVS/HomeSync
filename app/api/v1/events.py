@@ -97,4 +97,4 @@ async def rsvp_to_event(
     event = await EventService.get_event(db, event_id)
     if current_user.society_id != event.society_id and current_user.role.name != "Super Admin":
         raise ForbiddenError(detail="Access denied to this event.")
-    return await EventService.rsvp_to_event(db, event_id, data, current_user.id)
+    return await EventService.rsvp_event(db, event_id, current_user.id, data)

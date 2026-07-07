@@ -23,18 +23,18 @@ def check_tenant_access(user: User, society_id: uuid.UUID, allow_resident: bool 
     """
     Enforces tenant isolation:
     - Super Admin bypasses all checks.
-    - Admin (Society Admin) can only manage their own society.
-    - Resident (if allowed) can read only their own society.
+    - Society Admin can only manage their own society.
+    - Resident / Committee Member (if allowed) can read only their own society.
     """
     if user.role.name == "Super Admin":
         return
     
-    if user.role.name == "Admin":
+    if user.role.name == "Society Admin":
         if user.society_id != society_id:
             raise ForbiddenError(detail="Access denied: You do not belong to this society.")
         return
 
-    if allow_resident and user.role.name in ["Resident", "Staff"]:
+    if allow_resident and user.role.name in ["Resident", "Committee Member"]:
         if user.society_id != society_id:
             raise ForbiddenError(detail="Access denied: You do not belong to this society.")
         return
@@ -44,9 +44,9 @@ def check_tenant_access(user: User, society_id: uuid.UUID, allow_resident: bool 
 
 def require_admin(user: User = Depends(get_current_active_user)) -> User:
     """
-    Checks that the user is either Admin or Super Admin.
+    Checks that the user is either Society Admin or Super Admin.
     """
-    if user.role.name not in ["Super Admin", "Admin"]:
+    if user.role.name not in ["Super Admin", "Society Admin"]:
         raise ForbiddenError(detail="Only Society Admin and Super Admin can perform this action.")
     return user
 

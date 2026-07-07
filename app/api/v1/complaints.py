@@ -32,8 +32,8 @@ async def list_complaints(
     """
     Retrieve complaints list. Residents only see their own tickets, while admins/committee see all.
     """
-    # Check if user is staff/admin/committee
-    is_admin = current_user.role.name in ["Super Admin", "Admin", "Secretary", "Chairman", "Staff"]
+    # Check if user is admin/committee
+    is_admin = current_user.role.name in ["Super Admin", "Society Admin", "Committee Member"]
     filter_user_id = None if is_admin else current_user.id
 
     return await ComplaintService.list_complaints(db, society_id, filter_user_id)
@@ -55,7 +55,7 @@ async def get_complaint(
         raise ForbiddenError(detail="Access denied to this ticket.")
 
     # Non-admin residents can only view their own complaints
-    is_admin = current_user.role.name in ["Super Admin", "Admin", "Secretary", "Chairman", "Staff"]
+    is_admin = current_user.role.name in ["Super Admin", "Society Admin", "Committee Member"]
     if not is_admin and complaint.user_id != current_user.id:
         raise ForbiddenError(detail="Access denied to this ticket.")
 
@@ -70,20 +70,20 @@ async def update_complaint(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Update complaint details or assign vendor.
+    Update complaint details.
     """
     complaint = await ComplaintService.get_complaint(db, complaint_id)
 
-    is_admin = current_user.role.name in ["Super Admin", "Admin", "Secretary", "Chairman", "Staff"]
+    is_admin = current_user.role.name in ["Super Admin", "Society Admin", "Committee Member"]
     is_reporter = complaint.user_id == current_user.id
 
     if not is_admin and not is_reporter:
         raise ForbiddenError(detail="You do not have permission to modify this ticket.")
 
-    # Non-admins cannot change status or assign vendor
+    # Non-admins cannot change status
     if not is_admin:
-        if data.status or data.vendor_id or data.estimated_resolution_date:
-            raise ForbiddenError(detail="Only committee members/admins can update status or assign vendors.")
+        if data.status or data.estimated_resolution_date:
+            raise ForbiddenError(detail="Only committee members/admins can update status.")
 
     return await ComplaintService.update_complaint(db, complaint_id, data, current_user.id)
 
@@ -99,7 +99,7 @@ async def close_complaint(
     """
     complaint = await ComplaintService.get_complaint(db, complaint_id)
 
-    is_admin = current_user.role.name in ["Super Admin", "Admin", "Secretary", "Chairman", "Staff"]
+    is_admin = current_user.role.name in ["Super Admin", "Society Admin", "Committee Member"]
     is_reporter = complaint.user_id == current_user.id
 
     if not is_admin and not is_reporter:
@@ -108,24 +108,6 @@ async def close_complaint(
     return await ComplaintService.close_complaint(db, complaint_id, current_user.id)
 
 
-@router.post("/{complaint_id}/reopen", response_model=ComplaintResponse)
-async def reopen_complaint(
-    complaint_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Reopen a closed or resolved complaint.
-    """
-    complaint = await ComplaintService.get_complaint(db, complaint_id)
-
-    is_admin = current_user.role.name in ["Super Admin", "Admin", "Secretary", "Chairman", "Staff"]
-    is_reporter = complaint.user_id == current_user.id
-
-    if not is_admin and not is_reporter:
-        raise ForbiddenError(detail="You do not have permission to reopen this ticket.")
-
-    return await ComplaintService.reopen_complaint(db, complaint_id, current_user.id)
 
 
 @router.delete("/{complaint_id}", response_model=ComplaintResponse)
@@ -135,17 +117,17 @@ async def delete_complaint(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Delete a complaint. Only admins or the reporter can delete if status is RAISED.
+    Delete a complaint. Only admins or the reporter can delete if status is OPEN.
     """
     complaint = await ComplaintService.get_complaint(db, complaint_id)
 
-    is_admin = current_user.role.name in ["Super Admin", "Admin", "Secretary", "Chairman", "Staff"]
+    is_admin = current_user.role.name in ["Super Admin", "Society Admin", "Committee Member"]
     is_reporter = complaint.user_id == current_user.id
 
     if not is_admin and not is_reporter:
         raise ForbiddenError(detail="You do not have permission to delete this ticket.")
 
-    if not is_admin and complaint.status != "RAISED":
-        raise ForbiddenError(detail="Residents can only delete complaints that are in the RAISED status.")
+    if not is_admin and complaint.status != "OPEN":
+        raise ForbiddenError(detail="Residents can only delete complaints that are in the OPEN status.")
 
     return await ComplaintService.delete_complaint(db, complaint_id, current_user.id)

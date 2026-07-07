@@ -3,15 +3,9 @@ from enum import Enum
 
 class RoleEnum(str, Enum):
     SUPER_ADMIN = "Super Admin"
-    ADMIN = "Admin"
+    SOCIETY_ADMIN = "Society Admin"
+    COMMITTEE_MEMBER = "Committee Member"
     RESIDENT = "Resident"
-    STAFF = "Staff"
-<<<<<<< Updated upstream
-    SECRETARY = "Secretary"
-    CHAIRMAN = "Chairman"
-=======
-    TREASURER = "Treasurer"
->>>>>>> Stashed changes
 
 
 class PermissionEnum(str, Enum):
