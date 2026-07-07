@@ -1,7 +1,7 @@
 """add_billing_and_payments
 
 Revision ID: 662de9c9f4bc
-Revises: 067dd28b623a
+Revises: 9f21b43a7c10
 Create Date: 2026-07-06 17:38:58.484137
 
 """
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '662de9c9f4bc'
-down_revision: Union[str, Sequence[str], None] = '067dd28b623a'
+down_revision: Union[str, Sequence[str], None] = '9f21b43a7c10'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
