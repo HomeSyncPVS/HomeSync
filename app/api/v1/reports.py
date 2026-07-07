@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Response
+from fastapi import APIRouter, Depends, Query, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_active_user
@@ -39,7 +39,7 @@ def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None
     summary="Get billing report"
 )
 async def get_billing_report(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -53,7 +53,7 @@ async def get_billing_report(
     summary="Get payment report"
 )
 async def get_payment_report(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -67,7 +67,7 @@ async def get_payment_report(
     summary="Get revenue collections report"
 )
 async def get_revenue_report(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -81,7 +81,7 @@ async def get_revenue_report(
     summary="Get outstanding collections report"
 )
 async def get_outstanding_report(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -94,7 +94,7 @@ async def get_outstanding_report(
     summary="Export billing report to PDF format"
 )
 async def export_pdf(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -113,7 +113,7 @@ async def export_pdf(
     summary="Export billing report to Excel sheet format"
 )
 async def export_excel(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -132,7 +132,7 @@ async def export_excel(
     summary="Export billing report to CSV document format"
 )
 async def export_csv(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):

@@ -43,7 +43,7 @@ class BillRepository(BaseRepository[MaintenanceBill]):
         self,
         db: AsyncSession,
         *,
-        society_id: uuid.UUID,
+        society_id: Optional[uuid.UUID] = None,
         flat_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
         bill_type: Optional[str] = None,
@@ -53,20 +53,17 @@ class BillRepository(BaseRepository[MaintenanceBill]):
         """
         Fetch filtered list of bills.
         """
-        query = select(self.model).where(
-            and_(
-                self.model.society_id == society_id,
-                self.model.deleted_at.is_(None)
-            )
-        )
+        filters = [self.model.deleted_at.is_(None)]
+        if society_id:
+            filters.append(self.model.society_id == society_id)
         if flat_id:
-            query = query.where(self.model.flat_id == flat_id)
+            filters.append(self.model.flat_id == flat_id)
         if status:
-            query = query.where(self.model.status == status)
+            filters.append(self.model.status == status)
         if bill_type:
-            query = query.where(self.model.bill_type == bill_type)
+            filters.append(self.model.bill_type == bill_type)
 
-        query = query.options(selectinload(self.model.items)).order_by(self.model.created_at.desc()).offset(skip).limit(limit)
+        query = select(self.model).where(and_(*filters)).options(selectinload(self.model.items)).order_by(self.model.created_at.desc()).offset(skip).limit(limit)
         result = await db.execute(query)
         return list(result.scalars().all())
 
@@ -98,21 +95,20 @@ class BillRepository(BaseRepository[MaintenanceBill]):
         return max_seq
 
     async def get_outstanding_bills(
-        self, db: AsyncSession, *, society_id: uuid.UUID, flat_id: Optional[uuid.UUID] = None
+        self, db: AsyncSession, *, society_id: Optional[uuid.UUID] = None, flat_id: Optional[uuid.UUID] = None
     ) -> List[MaintenanceBill]:
         """
         Fetch unpaid/overdue bills with outstanding amounts.
         """
-        query = select(self.model).where(
-            and_(
-                self.model.society_id == society_id,
-                self.model.outstanding_amount > 0,
-                self.model.deleted_at.is_(None)
-            )
-        )
+        filters = [
+            self.model.outstanding_amount > 0,
+            self.model.deleted_at.is_(None)
+        ]
+        if society_id:
+            filters.append(self.model.society_id == society_id)
         if flat_id:
-            query = query.where(self.model.flat_id == flat_id)
-        query = query.options(selectinload(self.model.items)).order_by(self.model.due_date.asc())
+            filters.append(self.model.flat_id == flat_id)
+        query = select(self.model).where(and_(*filters)).options(selectinload(self.model.items)).order_by(self.model.due_date.asc())
         result = await db.execute(query)
         return list(result.scalars().all())
 

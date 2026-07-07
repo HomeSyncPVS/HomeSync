@@ -40,7 +40,6 @@ class WingService:
         )
         wing = await wing_repo.create(db, obj_in=wing_obj)
         await db.commit()
-        await db.refresh(wing)
         return wing
 
     @staticmethod
@@ -76,7 +75,6 @@ class WingService:
 
         updated_wing = await wing_repo.update(db, db_obj=wing, obj_in=update_dict)
         await db.commit()
-        await db.refresh(updated_wing)
         return updated_wing
 
     @staticmethod

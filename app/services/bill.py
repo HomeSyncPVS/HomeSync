@@ -29,14 +29,16 @@ class BillService:
         return f"{prefix}{new_seq:04d}"
 
     @staticmethod
-    async def create_bill(db: AsyncSession, data: BillCreate, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
+    async def create_bill(db: AsyncSession, data: BillCreate, society_id: Optional[uuid.UUID], user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
         # Check if flat exists and belongs to the society
         query = select(Flat).where(and_(Flat.id == data.flat_id, Flat.deleted_at.is_(None)))
         result = await db.execute(query)
         flat = result.scalar_one_or_none()
         if not flat:
             raise NotFoundError("Flat not found.")
-        if flat.society_id != society_id:
+        if society_id is None:
+            society_id = flat.society_id
+        elif flat.society_id != society_id:
             raise ValidationError("Flat does not belong to this society.")
 
         # Calculate subtotal
@@ -67,10 +69,7 @@ class BillService:
             await bill_repo.create_bill_item(db, bill_id=bill.id, name=item.name, amount=item.amount)
 
         await db.commit()
-        # Refresh to load relationships
-        db.add(bill)
-        await db.refresh(bill)
-        return bill
+        return await bill_repo.get_active(db, bill.id)
 
     @staticmethod
     async def bulk_generate_bills(db: AsyncSession, data: BulkBillGenerate, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> int:
@@ -113,16 +112,16 @@ class BillService:
         return generated_count
 
     @staticmethod
-    async def get_bill(db: AsyncSession, id: uuid.UUID, society_id: uuid.UUID) -> MaintenanceBill:
+    async def get_bill(db: AsyncSession, id: uuid.UUID, society_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
         bill = await bill_repo.get_active(db, id)
-        if not bill or bill.society_id != society_id:
+        if not bill or (society_id and bill.society_id != society_id):
             raise NotFoundError("Bill not found.")
         return bill
 
     @staticmethod
     async def get_multi_bills(
         db: AsyncSession,
-        society_id: uuid.UUID,
+        society_id: Optional[uuid.UUID] = None,
         flat_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
         bill_type: Optional[str] = None,
@@ -140,7 +139,7 @@ class BillService:
         )
 
     @staticmethod
-    async def update_bill(db: AsyncSession, id: uuid.UUID, data: BillUpdate, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
+    async def update_bill(db: AsyncSession, id: uuid.UUID, data: BillUpdate, society_id: Optional[uuid.UUID] = None, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
         bill = await BillService.get_bill(db, id, society_id)
         
         # Calculate updated outstanding amount if status or late_fee changes
@@ -157,17 +156,16 @@ class BillService:
         bill.updated_by = user_id
         await bill_repo.update(db, db_obj=bill, obj_in=update_dict)
         await db.commit()
-        await db.refresh(bill)
-        return bill
+        return await BillService.get_bill(db, id, society_id)
 
     @staticmethod
-    async def delete_bill(db: AsyncSession, id: uuid.UUID, society_id: uuid.UUID) -> None:
+    async def delete_bill(db: AsyncSession, id: uuid.UUID, society_id: Optional[uuid.UUID] = None) -> None:
         bill = await BillService.get_bill(db, id, society_id)
         await bill_repo.delete(db, id=bill.id)
         await db.commit()
 
     @staticmethod
-    async def send_bill(db: AsyncSession, id: uuid.UUID, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
+    async def send_bill(db: AsyncSession, id: uuid.UUID, society_id: Optional[uuid.UUID] = None, user_id: Optional[uuid.UUID] = None) -> MaintenanceBill:
         bill = await BillService.get_bill(db, id, society_id)
         if bill.status != "DRAFT":
             raise ValidationError("Only draft bills can be sent.")
@@ -176,11 +174,10 @@ class BillService:
         bill.sent_at = datetime.now(timezone.utc)
         bill.updated_by = user_id
         await db.commit()
-        await db.refresh(bill)
         
         # Log/Stub: Trigger notification dispatcher here
         logger.info(f"Notification triggered for sent bill: {bill.bill_number} to flat ID: {bill.flat_id}")
-        return bill
+        return await BillService.get_bill(db, id, society_id)
 
     @staticmethod
     async def apply_late_fees_if_overdue(db: AsyncSession, society_id: uuid.UUID) -> int:

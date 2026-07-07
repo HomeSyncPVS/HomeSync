@@ -40,7 +40,7 @@ def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None
     summary="Get overall dashboard analytics statistics"
 )
 async def get_dashboard_stats(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -54,7 +54,7 @@ async def get_dashboard_stats(
     summary="Get monthly revenue analytics data"
 )
 async def get_revenue_analytics(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -68,7 +68,7 @@ async def get_revenue_analytics(
     summary="Get payment methods analytics breakdown"
 )
 async def get_payments_analytics(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -82,7 +82,7 @@ async def get_payments_analytics(
     summary="Get collections percentage history"
 )
 async def get_collections_analytics(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -96,7 +96,7 @@ async def get_collections_analytics(
     summary="Get outstanding amount breakdown by wings"
 )
 async def get_outstanding_analytics(
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):

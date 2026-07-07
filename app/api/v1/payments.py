@@ -27,10 +27,8 @@ def require_society_admin(user: User = Depends(get_current_active_user)) -> User
     return user
 
 
-def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None) -> uuid.UUID:
+def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None) -> Optional[uuid.UUID]:
     if user.role.name == "Super Admin":
-        if not query_society_id:
-            raise ValidationError(detail="society_id is required for Super Admin.")
         return query_society_id
     if not user.society_id:
         raise ForbiddenError(detail="Access Denied: You are not associated with any society.")
@@ -45,11 +43,12 @@ def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None
 )
 async def create_order(
     data: OrderCreate,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user)
 ):
     # Only residents or admins of the society can initialize payment
-    society_id = get_user_society_id(user)
+    society_id = get_user_society_id(user, query_society_id)
     return await PaymentService.create_order(db, data, society_id, user_id=user.id)
 
 
@@ -60,10 +59,11 @@ async def create_order(
 )
 async def verify_payment(
     data: PaymentVerify,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user)
 ):
-    society_id = get_user_society_id(user)
+    society_id = get_user_society_id(user, query_society_id)
     return await PaymentService.verify_payment(db, data, society_id, user_id=user.id)
 
 
@@ -91,7 +91,7 @@ async def get_payments(
     status: Optional[str] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1),
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user)
 ):
@@ -116,7 +116,7 @@ async def get_payment_history(
     flat_id: Optional[uuid.UUID] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1),
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user)
 ):
@@ -163,8 +163,9 @@ async def get_payment(
 )
 async def refund_payment(
     data: PaymentRefund,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
-    society_id = get_user_society_id(user)
+    society_id = get_user_society_id(user, query_society_id)
     return await PaymentService.refund_payment(db, data, society_id, user_id=user.id)

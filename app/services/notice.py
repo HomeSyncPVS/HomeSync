@@ -66,7 +66,6 @@ class NoticeService:
         notice.updated_by = current_user_id
         db.add(notice)
         await db.flush()
-        await db.refresh(notice)
         return notice
 
     @staticmethod

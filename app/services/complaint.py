@@ -36,9 +36,23 @@ class ComplaintService:
         )
         db.add(complaint)
         await db.flush()
-        await db.refresh(complaint)
+
+        attachments = []
+        if data.attachment_urls:
+            for url in data.attachment_urls:
+                ext = url.split(".")[-1].lower() if "." in url else "jpg"
+                file_type = f"image/{ext}" if ext in ["jpg", "jpeg", "png", "webp", "gif"] else "application/octet-stream"
+                att = ComplaintAttachment(
+                    complaint_id=complaint.id,
+                    file_url=url,
+                    file_type=file_type
+                )
+                db.add(att)
+                attachments.append(att)
+            await db.flush()
+
         # Directly set on __dict__ to avoid lazy loading trigger in SQLAlchemy
-        complaint.__dict__["attachments"] = []
+        complaint.__dict__["attachments"] = attachments
         return complaint
 
     @staticmethod

@@ -47,11 +47,7 @@ class SocietyService:
             updated_by=user_id
         )
         await settings_repo.create(db, obj_in=settings_obj)
-        
         await db.commit()
-        # Refresh to load relationships
-        db.add(society)
-        await db.refresh(society)
         return society
 
     @staticmethod
@@ -90,7 +86,6 @@ class SocietyService:
         
         updated_society = await society_repo.update(db, db_obj=society, obj_in=update_dict)
         await db.commit()
-        await db.refresh(updated_society)
         return updated_society
 
     @staticmethod
@@ -104,7 +99,6 @@ class SocietyService:
         settings_obj = await settings_repo.get_by_society_id(db, id)
         if settings_obj:
             await settings_repo.delete_soft(db, settings_obj.id, user_id=user_id)
-            
         await db.commit()
         return society
 
@@ -134,7 +128,6 @@ class SocietyService:
         
         updated_settings = await settings_repo.update(db, db_obj=settings_obj, obj_in=update_dict)
         await db.commit()
-        await db.refresh(updated_settings)
         return updated_settings
 
     @staticmethod
@@ -187,8 +180,7 @@ class SocietyService:
         society.updated_by = user_id
         db.add(society)
         await db.commit()
-        await db.refresh(society)
-        return society
+        return await SocietyService.get_society(db, id)
 
     @staticmethod
     async def delete_branding_asset(
@@ -222,5 +214,4 @@ class SocietyService:
         society.updated_by = user_id
         db.add(society)
         await db.commit()
-        await db.refresh(society)
-        return society
+        return await SocietyService.get_society(db, id)

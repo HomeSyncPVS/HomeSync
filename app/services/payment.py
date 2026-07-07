@@ -2,7 +2,7 @@ import uuid
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions.custom import NotFoundError, ValidationError, ConflictError
@@ -23,11 +23,16 @@ bill_repo = BillRepository()
 
 class PaymentService:
     @staticmethod
-    async def create_order(db: AsyncSession, data: OrderCreate, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> OrderResponse:
+    async def create_order(db: AsyncSession, data: OrderCreate, society_id: Optional[uuid.UUID] = None, user_id: Optional[uuid.UUID] = None) -> OrderResponse:
         # Check if bill exists
         bill = await bill_repo.get_active(db, data.bill_id)
-        if not bill or bill.society_id != society_id:
+        if not bill:
             raise NotFoundError("Bill not found.")
+        if society_id and bill.society_id != society_id:
+            raise NotFoundError("Bill not found.")
+
+        if not society_id:
+            society_id = bill.society_id
 
         if bill.status == "PAID":
             raise ValidationError("Bill is already fully paid.")
@@ -63,7 +68,7 @@ class PaymentService:
         )
 
     @staticmethod
-    async def verify_payment(db: AsyncSession, data: PaymentVerify, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> Payment:
+    async def verify_payment(db: AsyncSession, data: PaymentVerify, society_id: Optional[uuid.UUID] = None, user_id: Optional[uuid.UUID] = None) -> Payment:
         # Check duplicate payment reference
         query_dup = select(Payment).where(
             and_(
@@ -77,13 +82,13 @@ class PaymentService:
             raise ConflictError("Duplicate payment detected: This transaction reference has already been processed.")
 
         # Find the pending payment by order_id/transaction_reference
-        query_pending = select(Payment).where(
-            and_(
-                Payment.transaction_reference == data.order_id,
-                Payment.society_id == society_id,
-                Payment.status == "PENDING"
-            )
-        )
+        filters = [
+            Payment.transaction_reference == data.order_id,
+            Payment.status == "PENDING"
+        ]
+        if society_id:
+            filters.append(Payment.society_id == society_id)
+        query_pending = select(Payment).where(and_(*filters))
         res_pending = await db.execute(query_pending)
         payment = res_pending.scalar_one_or_none()
         if not payment:
@@ -156,8 +161,7 @@ class PaymentService:
         )
 
         await db.commit()
-        await db.refresh(payment)
-        return payment
+        return await PaymentService.get_payment(db, payment.id, society_id)
 
     @staticmethod
     async def handle_webhook(db: AsyncSession, payload: dict) -> None:
@@ -194,16 +198,16 @@ class PaymentService:
         )
 
     @staticmethod
-    async def get_payment(db: AsyncSession, id: uuid.UUID, society_id: uuid.UUID) -> Payment:
+    async def get_payment(db: AsyncSession, id: uuid.UUID, society_id: Optional[uuid.UUID] = None) -> Payment:
         payment = await payment_repo.get_active(db, id)
-        if not payment or payment.society_id != society_id:
+        if not payment or (society_id and payment.society_id != society_id):
             raise NotFoundError("Payment record not found.")
         return payment
 
     @staticmethod
     async def get_multi_payments(
         db: AsyncSession,
-        society_id: uuid.UUID,
+        society_id: Optional[uuid.UUID] = None,
         flat_id: Optional[uuid.UUID] = None,
         bill_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
@@ -221,9 +225,9 @@ class PaymentService:
         )
 
     @staticmethod
-    async def refund_payment(db: AsyncSession, data: PaymentRefund, society_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> Payment:
+    async def refund_payment(db: AsyncSession, data: PaymentRefund, society_id: Optional[uuid.UUID] = None, user_id: Optional[uuid.UUID] = None) -> Payment:
         payment = await payment_repo.get_active(db, data.payment_id)
-        if not payment or payment.society_id != society_id:
+        if not payment or (society_id and payment.society_id != society_id):
             raise NotFoundError("Payment not found.")
 
         if payment.status != "COMPLETED":
@@ -255,5 +259,4 @@ class PaymentService:
                 bill.updated_by = user_id
 
         await db.commit()
-        await db.refresh(payment)
-        return payment
+        return await PaymentService.get_payment(db, payment.id, society_id)

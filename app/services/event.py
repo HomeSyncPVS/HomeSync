@@ -109,7 +109,6 @@ class EventService:
         event.deleted_at = datetime.now(timezone.utc)
         db.add(event)
         await db.flush()
-        await db.refresh(event)
         if "rsvps" not in event.__dict__:
             event.__dict__["rsvps"] = []
         return event
@@ -141,7 +140,7 @@ class EventService:
         """
         Submit/Update RSVP for an event.
         """
-        event = await event_repo.get(db, id=event_id)
+        event = await event_repo.get_with_rsvps(db, event_id)
         if not event or event.deleted_at is not None:
             raise NotFoundError(detail="Event not found.", error_code="EVENT_NOT_FOUND")
 
@@ -157,8 +156,22 @@ class EventService:
                 error_code="RSVP_DEADLINE_PASSED"
             )
 
+        # Validate Event Capacity
+        if event.capacity is not None:
+            current_occupied = sum(
+                1 + r.additional_guests
+                for r in event.rsvps
+                if r.status == "Attending" and r.user_id != user_id
+            )
+            new_spots = (1 + data.additional_guests) if data.status == "Attending" else 0
+            if current_occupied + new_spots > event.capacity:
+                raise ValidationError(
+                    detail="Event capacity has been reached.",
+                    error_code="EVENT_AT_CAPACITY"
+                )
+
         # Check if RSVP already exists
-        rsvp = await rsvp_repo.get_by_event_and_user(db, event_id, user_id)
+        rsvp = await rsvp_repo.get_by_user(db, event_id, user_id)
         if rsvp:
             rsvp.status = rsvp.status if data.status is None else data.status
             rsvp.additional_guests = data.additional_guests

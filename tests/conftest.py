@@ -193,13 +193,19 @@ async def clean_test_db(db: AsyncSession):
 
 
 
+_db_initialized = False
+
+
 @pytest.fixture(scope="function", autouse=True)
 async def db() -> AsyncGenerator[AsyncSession, None]:
     """
     Test DB session fixture for assertions.
     """
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    global _db_initialized
+    if not _db_initialized:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        _db_initialized = True
 
     async with TestingSessionLocal() as session:
         # Seed default data

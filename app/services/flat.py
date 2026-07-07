@@ -63,7 +63,6 @@ class FlatService:
         )
         flat = await flat_repo.create(db, obj_in=flat_obj)
         await db.commit()
-        await db.refresh(flat)
         return flat
 
     @staticmethod
@@ -113,7 +112,6 @@ class FlatService:
 
         updated_flat = await flat_repo.update(db, db_obj=flat, obj_in=update_dict)
         await db.commit()
-        await db.refresh(updated_flat)
         return updated_flat
 
     @staticmethod

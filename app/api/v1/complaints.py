@@ -85,7 +85,7 @@ async def update_complaint(
         if data.status or data.estimated_resolution_date:
             raise ForbiddenError(detail="Only committee members/admins can update status.")
 
-    return await ComplaintService.update_complaint(db, complaint_id, data, current_user.id)
+    return await ComplaintService.update_complaint(db, complaint_id, data, current_user.id, is_admin=is_admin)
 
 
 @router.post("/{complaint_id}/close", response_model=ComplaintResponse)

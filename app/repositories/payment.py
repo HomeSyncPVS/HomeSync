@@ -28,7 +28,7 @@ class PaymentRepository(BaseRepository[Payment]):
         self,
         db: AsyncSession,
         *,
-        society_id: uuid.UUID,
+        society_id: Optional[uuid.UUID] = None,
         flat_id: Optional[uuid.UUID] = None,
         bill_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
@@ -38,20 +38,17 @@ class PaymentRepository(BaseRepository[Payment]):
         """
         Fetch filtered list of payments.
         """
-        query = select(self.model).where(
-            and_(
-                self.model.society_id == society_id,
-                self.model.deleted_at.is_(None)
-            )
-        )
+        filters = [self.model.deleted_at.is_(None)]
+        if society_id:
+            filters.append(self.model.society_id == society_id)
         if flat_id:
-            query = query.where(self.model.flat_id == flat_id)
+            filters.append(self.model.flat_id == flat_id)
         if bill_id:
-            query = query.where(self.model.bill_id == bill_id)
+            filters.append(self.model.bill_id == bill_id)
         if status:
-            query = query.where(self.model.status == status)
+            filters.append(self.model.status == status)
 
-        query = query.options(selectinload(self.model.receipt)).order_by(self.model.created_at.desc()).offset(skip).limit(limit)
+        query = select(self.model).where(and_(*filters)).options(selectinload(self.model.receipt)).order_by(self.model.created_at.desc()).offset(skip).limit(limit)
         result = await db.execute(query)
         return list(result.scalars().all())
 

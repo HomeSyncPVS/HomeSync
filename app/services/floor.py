@@ -39,7 +39,6 @@ class FloorService:
         )
         floor = await floor_repo.create(db, obj_in=floor_obj)
         await db.commit()
-        await db.refresh(floor)
         return floor
 
     @staticmethod
@@ -75,7 +74,6 @@ class FloorService:
 
         updated_floor = await floor_repo.update(db, db_obj=floor, obj_in=update_dict)
         await db.commit()
-        await db.refresh(updated_floor)
         return updated_floor
 
     @staticmethod

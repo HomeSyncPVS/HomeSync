@@ -24,7 +24,12 @@ async def get_auth_headers(client: AsyncClient, db, email: str, role_name: str, 
         is_verified=True,
     )
     db.add(user)
+    await db.flush()
     await db.commit()
+
+    # Verify user was persisted before proceeding
+    check = await db.execute(select(User).where(User.email == email))
+    assert check.scalar_one_or_none() is not None, f"User {email} not found after commit!"
 
     payload = {
         "email": email,
@@ -35,6 +40,7 @@ async def get_auth_headers(client: AsyncClient, db, email: str, role_name: str, 
     assert response.status_code == 200, response.text
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
 
 
 @pytest.mark.asyncio
@@ -126,7 +132,7 @@ async def test_billing_payment_reports_analytics_flow(client: AsyncClient, db):
         },
         headers=super_headers,
     )
-    assert create_order_res.status_code == 200, create_order_res.text
+    assert create_order_res.status_code == 201, create_order_res.text
     order_id = create_order_res.json()["order_id"]
 
     verify_res = await client.post(
@@ -190,4 +196,4 @@ async def test_billing_payment_reports_analytics_flow(client: AsyncClient, db):
         headers=super_headers,
     )
     assert outstanding_res.status_code == 200
-    assert outstanding_res.json()["outstanding_amount"] == 0.0
+    assert sum(item["outstanding_amount"] for item in outstanding_res.json()) == 0.0

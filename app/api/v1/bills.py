@@ -21,10 +21,8 @@ def require_society_admin(user: User = Depends(get_current_active_user)) -> User
     return user
 
 
-def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None) -> uuid.UUID:
+def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None) -> Optional[uuid.UUID]:
     if user.role.name == "Super Admin":
-        if not query_society_id:
-            raise ValidationError(detail="society_id is required for Super Admin.")
         return query_society_id
     if not user.society_id:
         raise ForbiddenError(detail="Access Denied: You are not associated with any society.")
@@ -39,7 +37,7 @@ def get_user_society_id(user: User, query_society_id: Optional[uuid.UUID] = None
 )
 async def create_bill(
     data: BillCreate,
-    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id", description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -54,7 +52,7 @@ async def create_bill(
 )
 async def bulk_generate_bills(
     data: BulkBillGenerate,
-    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id", description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -73,7 +71,7 @@ async def get_bills(
     bill_type: Optional[str] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1),
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user)
 ):
@@ -96,7 +94,7 @@ async def get_bills(
 )
 async def get_outstanding_bills(
     flat_id: Optional[uuid.UUID] = None,
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user)
 ):
@@ -118,7 +116,7 @@ async def get_outstanding_bills(
 )
 async def get_bills_history(
     flat_id: Optional[uuid.UUID] = None,
-    query_society_id: Optional[uuid.UUID] = None,
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1),
     db: AsyncSession = Depends(get_db),
@@ -167,7 +165,7 @@ async def get_bill(
 async def update_bill(
     id: uuid.UUID,
     data: BillUpdate,
-    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id", description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -182,7 +180,7 @@ async def update_bill(
 )
 async def delete_bill(
     id: uuid.UUID,
-    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id", description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -198,7 +196,7 @@ async def delete_bill(
 )
 async def send_bill(
     id: uuid.UUID,
-    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id", description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
@@ -212,7 +210,7 @@ async def send_bill(
     summary="Manually trigger late fees scan"
 )
 async def trigger_late_fees(
-    query_society_id: Optional[uuid.UUID] = Query(None, description="Society ID for Super Admin"),
+    query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id", description="Society ID for Super Admin"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_society_admin)
 ):
