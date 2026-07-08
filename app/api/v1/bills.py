@@ -94,6 +94,7 @@ async def get_bills(
 )
 async def get_outstanding_bills(
     flat_id: Optional[uuid.UUID] = None,
+    bill_type: Optional[str] = Query(None, description="Filter by bill type"),
     query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user)
@@ -104,6 +105,7 @@ async def get_outstanding_bills(
         society_id=society_id,
         flat_id=flat_id,
         status="OVERDUE", # outstanding is unpaid/overdue/partially_paid. Let's return overdue and sent/partially_paid
+        bill_type=bill_type,
         skip=0,
         limit=100
     )
@@ -116,6 +118,7 @@ async def get_outstanding_bills(
 )
 async def get_bills_history(
     flat_id: Optional[uuid.UUID] = None,
+    bill_type: Optional[str] = Query(None, description="Filter by bill type"),
     query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1),
@@ -128,6 +131,7 @@ async def get_bills_history(
         db,
         society_id=society_id,
         flat_id=flat_id,
+        bill_type=bill_type,
         skip=skip,
         limit=limit
     )

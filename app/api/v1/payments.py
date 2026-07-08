@@ -114,6 +114,8 @@ async def get_payments(
 )
 async def get_payment_history(
     flat_id: Optional[uuid.UUID] = None,
+    bill_id: Optional[uuid.UUID] = Query(None, description="Filter by bill ID"),
+    status: Optional[str] = Query(None, description="Filter by payment status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1),
     query_society_id: Optional[uuid.UUID] = Query(None, alias="society_id"),
@@ -126,6 +128,8 @@ async def get_payment_history(
         db,
         society_id=society_id,
         flat_id=flat_id,
+        bill_id=bill_id,
+        status=status,
         skip=skip,
         limit=limit
     )

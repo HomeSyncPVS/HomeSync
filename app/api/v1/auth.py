@@ -190,6 +190,20 @@ async def verify_email(
     return SuccessResponse(message="Email address verified successfully.")
 
 
+@router.get(
+    "/verify-email",
+    response_model=SuccessResponse,
+    summary="Verify Email Address (GET)",
+    description="Completes email verification using a valid verification token from GET link.",
+)
+async def verify_email_get(
+    token: str = Query(..., description="Email verification token"),
+    db: AsyncSession = Depends(get_db)
+):
+    await AuthService.verify_email(db, token)
+    return SuccessResponse(message="Email address verified successfully.")
+
+
 # ==========================================
 # PASSWORD MANAGEMENT
 # ==========================================
@@ -418,6 +432,8 @@ async def google_callback(
     db: AsyncSession = Depends(get_db)
 ):
     # Mock authenticating Google profile
+    import logging
+    logging.getLogger("homesync.auth").info(f"Received Google callback authorization code: {code}")
     mock_email = "oauth-google-user@homesync.com"
     user = await user_repo.get_by_email(db, mock_email)
     if not user:
@@ -467,6 +483,8 @@ async def apple_callback(
     db: AsyncSession = Depends(get_db)
 ):
     # Mock authenticating Apple profile
+    import logging
+    logging.getLogger("homesync.auth").info(f"Received Apple callback authorization code: {code}")
     mock_email = "oauth-apple-user@homesync.com"
     user = await user_repo.get_by_email(db, mock_email)
     if not user:
