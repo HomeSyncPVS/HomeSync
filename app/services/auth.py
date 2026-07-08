@@ -124,6 +124,12 @@ class AuthService:
         if not user.is_active:
             raise ForbiddenError(detail="User account is deactivated.")
 
+        if not user.is_verified:
+            raise ForbiddenError(
+                detail="Email address is not verified. Please verify your email first.",
+                error_code="EMAIL_NOT_VERIFIED"
+            )
+
         # Register or retrieve device binding
         device_obj = None
         if data.push_token or data.device_model:
