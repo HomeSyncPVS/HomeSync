@@ -85,6 +85,8 @@ async def list_payments(
 @router.get("/history", response_model=PaymentListResponse)
 async def payment_history(
     society_id: Optional[uuid.UUID] = Query(None),
+    bill_id: Optional[uuid.UUID] = Query(None),
+    status: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -97,7 +99,9 @@ async def payment_history(
         raise ValidationError(detail="society_id is required.", error_code="SOCIETY_ID_REQUIRED")
 
     check_tenant_access(current_user, society_id, allow_resident=True)
-    payments = await PaymentService.get_history(db, society_id=society_id, skip=skip, limit=limit)
+    payments = await PaymentService.get_history(
+        db, society_id=society_id, bill_id=bill_id, status=status, skip=skip, limit=limit
+    )
     return PaymentListResponse(items=payments, count=len(payments))
 
 

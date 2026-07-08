@@ -203,8 +203,17 @@ class PaymentService:
         )
 
     @staticmethod
-    async def get_history(db: AsyncSession, society_id: uuid.UUID, skip: int = 0, limit: int = 100):
-        return await payment_repo.get_history(db, society_id=society_id, skip=skip, limit=limit)
+    async def get_history(
+        db: AsyncSession,
+        society_id: uuid.UUID,
+        bill_id: Optional[uuid.UUID] = None,
+        status: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+    ):
+        return await payment_repo.get_history(
+            db, society_id=society_id, bill_id=bill_id, status=status, skip=skip, limit=limit
+        )
 
     @staticmethod
     async def refund_payment(db: AsyncSession, data, user_id: Optional[uuid.UUID] = None) -> Payment:

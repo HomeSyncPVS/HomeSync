@@ -414,7 +414,7 @@ async def google_login():
     description="Callback handler for Google OAuth. Processes auth code and logs in/registers user.",
 )
 async def google_callback(
-    code: str = Query(..., description="Google Authorization Code"),
+    code: Optional[str] = Query(None, description="Google Authorization Code"),
     db: AsyncSession = Depends(get_db)
 ):
     # Mock authenticating Google profile
@@ -436,13 +436,15 @@ async def google_callback(
         await db.flush()
 
     # Log in user
-    login_data = LoginRequest(email=user.email, password="OAuthSecureDefaultPassword!12")
-    result = await AuthService.login_user(db, login_data, "127.0.0.1", "Google OAuth Agent")
+    access_token = create_access_token(data={"sub": user.email, "role": user.role.name})
+    refresh_token = create_refresh_token(data={"sub": user.email})
+    await session_repo.create_session(db, user_id=user.id, refresh_token=refresh_token)
+    await db.commit()
     return LoginResponse(
-        access_token=result["access_token"],
-        refresh_token=result["refresh_token"],
-        session_id=result["session_id"],
-        user=UserResponse.model_validate(result["user"])
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        user=UserResponse.model_validate(user),
     )
 
 
@@ -463,7 +465,7 @@ async def apple_login():
     description="Callback handler for Apple Sign In.",
 )
 async def apple_callback(
-    code: str = Query(..., description="Apple authorization code"),
+    code: Optional[str] = Query(None, description="Apple authorization code"),
     db: AsyncSession = Depends(get_db)
 ):
     # Mock authenticating Apple profile
@@ -485,13 +487,15 @@ async def apple_callback(
         await db.flush()
 
     # Log in user
-    login_data = LoginRequest(email=user.email, password="OAuthSecureDefaultPassword!12")
-    result = await AuthService.login_user(db, login_data, "127.0.0.1", "Apple OAuth Agent")
+    access_token = create_access_token(data={"sub": user.email, "role": user.role.name})
+    refresh_token = create_refresh_token(data={"sub": user.email})
+    await session_repo.create_session(db, user_id=user.id, refresh_token=refresh_token)
+    await db.commit()
     return LoginResponse(
-        access_token=result["access_token"],
-        refresh_token=result["refresh_token"],
-        session_id=result["session_id"],
-        user=UserResponse.model_validate(result["user"])
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        user=UserResponse.model_validate(user),
     )
 
 

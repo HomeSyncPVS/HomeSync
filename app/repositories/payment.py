@@ -64,10 +64,19 @@ class PaymentRepository(BaseRepository[Payment]):
         db: AsyncSession,
         *,
         society_id: uuid.UUID,
+        bill_id: Optional[uuid.UUID] = None,
+        status: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
     ) -> List[Payment]:
-        return await self.get_multi_active(db, society_id=society_id, skip=skip, limit=limit)
+        return await self.get_multi_active(
+            db,
+            society_id=society_id,
+            bill_id=bill_id,
+            status=status,
+            skip=skip,
+            limit=limit,
+        )
 
     async def create_receipt(self, db: AsyncSession, receipt: PaymentReceipt) -> PaymentReceipt:
         db.add(receipt)

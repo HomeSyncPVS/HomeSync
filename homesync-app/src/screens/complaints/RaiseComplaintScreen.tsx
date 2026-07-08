@@ -15,78 +15,90 @@ const CATEGORIES = ['Plumbing', 'Electrical', 'Carpentry', 'Cleaning', 'Security
 
 export function RaiseComplaintScreen() {
   const navigation = useNavigation<Nav>();
-  const { colors, spacing } = useTheme();
-  const [category, setCategory] = useState<string | null>(null);
-  const [subCategory, setSubCategory] = useState('');
+  const { colors, spacing, radius } = useTheme();
+  
+  const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [category, setCategory] = useState<string | null>(null);
   const [priority, setPriority] = useState<Priority>('Medium');
-  const [photos, setPhotos] = useState<string[]>([]); // placeholder URIs once expo-image-picker is wired up
+  const [location, setLocation] = useState('');
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
 
-  const isValid = category !== null && description.trim().length > 0;
+  const isValid = title.trim().length > 0 && description.trim().length > 0 && category !== null && location.trim().length > 0;
 
-  function handleSubmit() {
+  const handleSubmit = async () => {
     if (!isValid) {
-      Alert.alert('Missing details', 'Please select a category and add a description before submitting.');
+      Alert.alert('Missing Fields', 'Please fill out all fields before submitting.');
       return;
     }
-    // TODO: wire to POST /complaints once backend is live (multipart with photos)
-    navigation.goBack();
-  }
+
+    try {
+      // Simulated POST /complaints/
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      Alert.alert('Success', 'Complaint ticket raised successfully.', [
+        { text: 'OK', onPress: () => navigation.goBack() }
+      ]);
+    } catch (e) {
+      Alert.alert('Error', 'Failed to submit complaint ticket.');
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Header title="Raise Complaint" />
-      <ScrollView contentContainerStyle={{ padding: spacing.containerMargin, gap: spacing.md, paddingBottom: 120 }}>
-        <Card>
+      <ScrollView contentContainerStyle={{ padding: spacing.containerMargin, gap: spacing.md, paddingBottom: 100 }}>
+        
+        {/* Title details */}
+        <Card style={styles.formCard}>
+          <Text style={[styles.label, { color: colors.onSurfaceVariant }]}>Complaint Title</Text>
+          <TextInput
+            style={[styles.input, { borderColor: colors.outlineVariant, color: colors.onSurface, borderRadius: radius.md }]}
+            placeholder="e.g. Kitchen sink water seepage"
+            placeholderTextColor={colors.outline}
+            value={title}
+            onChangeText={setTitle}
+          />
+        </Card>
+
+        {/* Category selector */}
+        <Card style={StyleSheet.flatten([styles.formCard, { zIndex: 30 }])}>
           <Text style={[styles.label, { color: colors.onSurfaceVariant }]}>Category</Text>
-          <View style={styles.categoryGrid}>
-            {CATEGORIES.map((c) => (
-              <TouchableOpacity
-                key={c}
-                onPress={() => setCategory(c)}
-                style={[
-                  styles.categoryChip,
-                  { borderColor: colors.outlineVariant, backgroundColor: category === c ? colors.primary : colors.surface },
-                ]}
-              >
-                <Text style={{ color: category === c ? '#FFFFFF' : colors.onSurface, fontSize: 13, fontWeight: '600' }}>
-                  {c}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <Text style={[styles.label, { color: colors.onSurfaceVariant, marginTop: 16 }]}>Sub-category</Text>
-          <TextInput
-            style={[styles.input, { borderColor: colors.outlineVariant, color: colors.onSurface }]}
-            placeholder="e.g. Leaking Faucet"
-            placeholderTextColor={colors.outline}
-            value={subCategory}
-            onChangeText={setSubCategory}
-          />
+          <TouchableOpacity
+            style={[styles.selector, { borderColor: colors.outlineVariant, borderRadius: radius.md }]}
+            onPress={() => setShowCategoryDropdown(!showCategoryDropdown)}
+          >
+            <Text style={{ color: category ? colors.onSurface : colors.outline }}>
+              {category || 'Select category...'}
+            </Text>
+            <MaterialIcons name={showCategoryDropdown ? 'arrow-drop-up' : 'arrow-drop-down'} size={24} color={colors.onSurface} />
+          </TouchableOpacity>
+          {showCategoryDropdown && (
+            <View style={[styles.dropdownOptions, { borderColor: colors.outlineVariant, backgroundColor: colors.surface, borderRadius: radius.md }]}>
+              {CATEGORIES.map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  style={[styles.dropdownOpt, { borderBottomColor: colors.outlineVariant }]}
+                  onPress={() => {
+                    setCategory(c);
+                    setShowCategoryDropdown(false);
+                  }}
+                >
+                  <Text style={{ color: colors.onSurface, fontWeight: '500' }}>{c}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </Card>
 
-        <Card>
-          <Text style={[styles.label, { color: colors.onSurfaceVariant }]}>Description</Text>
-          <TextInput
-            style={[styles.textArea, { borderColor: colors.outlineVariant, color: colors.onSurface }]}
-            placeholder="Provide details about the issue to help our technician..."
-            placeholderTextColor={colors.outline}
-            multiline
-            numberOfLines={5}
-            value={description}
-            onChangeText={setDescription}
-          />
-        </Card>
-
-        <Card>
+        {/* Priority Level */}
+        <Card style={styles.formCard}>
           <Text style={[styles.label, { color: colors.onSurfaceVariant }]}>Priority Level</Text>
-          <View style={[styles.segmentedControl, { backgroundColor: colors.surfaceContainerLow }]}>
+          <View style={[styles.segmentedControl, { backgroundColor: colors.surfaceContainerLow, borderRadius: radius.md }]}>
             {(['Low', 'Medium', 'High'] as Priority[]).map((p) => (
               <TouchableOpacity
                 key={p}
                 onPress={() => setPriority(p)}
-                style={[styles.segment, priority === p && { backgroundColor: colors.primary }]}
+                style={[styles.segment, priority === p && { backgroundColor: colors.primary, borderRadius: radius.md - 4 }]}
               >
                 <Text style={{ color: priority === p ? '#FFFFFF' : colors.onSurfaceVariant, fontWeight: '700', fontSize: 13 }}>
                   {p}
@@ -96,39 +108,43 @@ export function RaiseComplaintScreen() {
           </View>
         </Card>
 
-        <Card>
-          <Text style={[styles.label, { color: colors.onSurfaceVariant }]}>Evidence Photos (Max 5)</Text>
-          <View style={styles.photoGrid}>
-            <TouchableOpacity
-              style={[styles.addPhotoBox, { borderColor: colors.primary }]}
-              onPress={() =>
-                photos.length < 5 && setPhotos((p) => [...p, `placeholder-${p.length}`])
-              }
-            >
-              <MaterialIcons name="photo-camera" size={22} color={colors.primary} />
-              <Text style={{ color: colors.primary, fontSize: 10, fontWeight: '700', marginTop: 2 }}>ADD</Text>
-            </TouchableOpacity>
-            {photos.map((p, i) => (
-              <View key={p} style={[styles.photoThumb, { backgroundColor: colors.surfaceContainerHigh }]}>
-                <TouchableOpacity
-                  style={[styles.removePhoto, { backgroundColor: 'rgba(0,0,0,0.5)' }]}
-                  onPress={() => setPhotos((prev) => prev.filter((_, idx) => idx !== i))}
-                >
-                  <MaterialIcons name="close" size={12} color="#FFFFFF" />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
+        {/* Location within flat */}
+        <Card style={styles.formCard}>
+          <Text style={[styles.label, { color: colors.onSurfaceVariant }]}>Location</Text>
+          <TextInput
+            style={[styles.input, { borderColor: colors.outlineVariant, color: colors.onSurface, borderRadius: radius.md }]}
+            placeholder="e.g. Master Bedroom, Balcony, Kitchen"
+            placeholderTextColor={colors.outline}
+            value={location}
+            onChangeText={setLocation}
+          />
         </Card>
+
+        {/* Description detail */}
+        <Card style={styles.formCard}>
+          <Text style={[styles.label, { color: colors.onSurfaceVariant }]}>Description</Text>
+          <TextInput
+            style={[styles.textArea, { borderColor: colors.outlineVariant, color: colors.onSurface, borderRadius: radius.md }]}
+            placeholder="Detail the issue to help our team address it..."
+            placeholderTextColor={colors.outline}
+            multiline
+            numberOfLines={5}
+            value={description}
+            onChangeText={setDescription}
+          />
+        </Card>
+
       </ScrollView>
 
+      {/* Footer trigger */}
       <View style={[styles.bottomBar, { backgroundColor: colors.surface, borderTopColor: colors.outlineVariant }]}>
         <TouchableOpacity
-          style={[styles.submitButton, { backgroundColor: isValid ? colors.primary : colors.outlineVariant }]}
+          style={[styles.submitButton, { backgroundColor: isValid ? colors.primary : colors.outlineVariant, borderRadius: radius.md }]}
           onPress={handleSubmit}
+          disabled={!isValid}
         >
           <MaterialIcons name="send" size={18} color="#FFFFFF" />
-          <Text style={styles.submitButtonText}>Submit Complaint</Text>
+          <Text style={styles.submitButtonText}>Raise Complaint</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -136,18 +152,82 @@ export function RaiseComplaintScreen() {
 }
 
 const styles = StyleSheet.create({
-  label: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 8 },
-  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  categoryChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
-  input: { height: 48, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, fontSize: 14 },
-  textArea: { minHeight: 100, borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 14, textAlignVertical: 'top' },
-  segmentedControl: { flexDirection: 'row', borderRadius: 12, padding: 4 },
-  segment: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
-  photoGrid: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  addPhotoBox: { width: 64, height: 64, borderRadius: 12, borderWidth: 2, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' },
-  photoThumb: { width: 64, height: 64, borderRadius: 12 },
-  removePhoto: { position: 'absolute', top: 2, right: 2, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
-  bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, borderTopWidth: 1 },
-  submitButton: { height: 52, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  submitButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
+  formCard: {
+    padding: 16,
+    position: 'relative',
+  },
+  label: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+    letterSpacing: 0.5,
+  },
+  input: {
+    height: 48,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  selector: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    height: 48,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+  },
+  dropdownOptions: {
+    position: 'absolute',
+    top: 76,
+    left: 16,
+    right: 16,
+    borderWidth: 1,
+    zIndex: 40,
+    overflow: 'hidden',
+  },
+  dropdownOpt: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+  },
+  segmentedControl: {
+    flexDirection: 'row',
+    padding: 4,
+  },
+  segment: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  textArea: {
+    minHeight: 120,
+    borderWidth: 1,
+    padding: 14,
+    fontSize: 14,
+    textAlignVertical: 'top',
+    fontWeight: '500',
+  },
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 16,
+    borderTopWidth: 1,
+  },
+  submitButton: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  submitButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
+  },
 });

@@ -261,8 +261,8 @@ class BillService:
         return bill
 
     @staticmethod
-    async def get_outstanding(db: AsyncSession, society_id: uuid.UUID) -> List[MaintenanceBill]:
-        bills = await bill_repo.get_outstanding(db, society_id=society_id)
+    async def get_outstanding(db: AsyncSession, society_id: uuid.UUID, bill_type: Optional[str] = None) -> List[MaintenanceBill]:
+        bills = await bill_repo.get_outstanding(db, society_id=society_id, bill_type=bill_type)
         late_fee_percentage = await BillService._get_late_fee_percentage(db, society_id)
 
         today = date.today()
@@ -288,6 +288,7 @@ class BillService:
         *,
         society_id: uuid.UUID,
         flat_id: Optional[uuid.UUID] = None,
+        bill_type: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
     ) -> List[MaintenanceBill]:
@@ -295,6 +296,8 @@ class BillService:
             db,
             society_id=society_id,
             flat_id=flat_id,
+            status=None,
+            bill_type=bill_type,
             skip=skip,
             limit=limit,
         )

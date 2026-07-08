@@ -42,6 +42,7 @@ class BillRepository(BaseRepository[MaintenanceBill]):
         society_id: Optional[uuid.UUID] = None,
         flat_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
+        bill_type: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
     ) -> List[MaintenanceBill]:
@@ -57,24 +58,28 @@ class BillRepository(BaseRepository[MaintenanceBill]):
             query = query.where(self.model.flat_id == flat_id)
         if status:
             query = query.where(self.model.status == status)
+        if bill_type:
+            query = query.where(self.model.bill_type == bill_type)
 
         query = query.offset(skip).limit(limit)
         result = await db.execute(query)
         return list(result.scalars().all())
 
     async def get_outstanding(
-        self, db: AsyncSession, *, society_id: uuid.UUID
+        self, db: AsyncSession, *, society_id: uuid.UUID, bill_type: Optional[str] = None
     ) -> List[MaintenanceBill]:
+        conditions = [
+            self.model.society_id == society_id,
+            self.model.deleted_at.is_(None),
+            self.model.status.in_(["GENERATED", "SENT", "PARTIALLY_PAID", "OVERDUE"]),
+            self.model.paid_amount < self.model.total_amount,
+        ]
+        if bill_type:
+            conditions.append(self.model.bill_type == bill_type)
+
         query = (
             select(self.model)
-            .where(
-                and_(
-                    self.model.society_id == society_id,
-                    self.model.deleted_at.is_(None),
-                    self.model.status.in_(["GENERATED", "SENT", "PARTIALLY_PAID", "OVERDUE"]),
-                    self.model.paid_amount < self.model.total_amount,
-                )
-            )
+            .where(and_(*conditions))
             .options(selectinload(self.model.items))
             .order_by(self.model.due_date.asc())
         )

@@ -82,6 +82,7 @@ async def list_bills(
 @router.get("/outstanding", response_model=BillListResponse)
 async def get_outstanding(
     society_id: Optional[uuid.UUID] = Query(None),
+    bill_type: Optional[str] = Query(None, description="Filter by type e.g. MAINTENANCE"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -92,7 +93,7 @@ async def get_outstanding(
         raise ValidationError(detail="society_id is required.", error_code="SOCIETY_ID_REQUIRED")
 
     check_tenant_access(current_user, society_id, allow_resident=True)
-    bills = await BillService.get_outstanding(db, society_id)
+    bills = await BillService.get_outstanding(db, society_id, bill_type=bill_type)
     return BillListResponse(items=bills, count=len(bills))
 
 
@@ -100,6 +101,7 @@ async def get_outstanding(
 async def get_history(
     society_id: Optional[uuid.UUID] = Query(None),
     flat_id: Optional[uuid.UUID] = Query(None),
+    bill_type: Optional[str] = Query(None, description="Filter by type e.g. MAINTENANCE"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -112,7 +114,9 @@ async def get_history(
         raise ValidationError(detail="society_id is required.", error_code="SOCIETY_ID_REQUIRED")
 
     check_tenant_access(current_user, society_id, allow_resident=True)
-    bills = await BillService.get_history(db, society_id=society_id, flat_id=flat_id, skip=skip, limit=limit)
+    bills = await BillService.get_history(
+        db, society_id=society_id, flat_id=flat_id, bill_type=bill_type, skip=skip, limit=limit
+    )
     return BillListResponse(items=bills, count=len(bills))
 
 
