@@ -78,12 +78,16 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     user = await AuthService.register_user(db, data)
     
     # Automatically send verification email
+    import logging
+    _email_logger = logging.getLogger("homesync.email")
     try:
         await AuthService.send_email_verification(db, user)
-    except Exception:
-        # Don't fail the registration if sending email fails
-        pass
+        _email_logger.info(f"Verification email sent to {user.email}")
+    except Exception as e:
+        # Don't fail the registration if sending email fails, but log the error
+        _email_logger.error(f"Failed to send verification email to {user.email}: {str(e)}", exc_info=True)
         
+
     return RegisterResponse(
         message="Registration successful. Verification email has been sent.",
         user=UserResponse.model_validate(user)
