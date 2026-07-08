@@ -29,22 +29,30 @@ def send_email(to_email: str, subject: str, html_content: str) -> None:
     msg.attach(MIMEText(html_content, "html"))
 
     try:
-        # Resolve port
-        port = settings.SMTP_PORT or 587
-        with smtplib.SMTP(settings.SMTP_HOST, port) as server:
-            if port == 587:
+        # Use SMTP_SSL on port 465 (works on Render / cloud hosts where port 587 is blocked)
+        port = settings.SMTP_PORT or 465
+        if port == 465:
+            import ssl
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(settings.SMTP_HOST, port, context=context) as server:
+                if settings.SMTP_PASSWORD:
+                    server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(settings.SMTP_HOST, port) as server:
                 server.starttls()
-            if settings.SMTP_PASSWORD:
-                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-            server.send_message(msg)
-            logger.info(f"Email sent to {to_email} successfully.")
+                if settings.SMTP_PASSWORD:
+                    server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                server.send_message(msg)
+        logger.info(f"Email sent to {to_email} successfully.")
     except Exception as e:
-        logger.error(f"Error sending email to {to_email}: {str(e)}")
+        logger.error(f"SMTP ERROR sending email to {to_email}: {str(e)}", exc_info=True)
+        raise
 
 
 def send_verification_email(email: str, token: str) -> None:
     subject = "Verify your HomeSync Account"
-    link = f"{settings.SUPABASE_URL}/api/v1/auth/verify-email?token={token}"
+    link = f"{settings.BACKEND_URL}/api/v1/auth/verify-email?token={token}"
     html_content = f"""
     <h1>Welcome to HomeSync!</h1>
     <p>Please verify your email address by clicking the link below:</p>
@@ -57,7 +65,7 @@ def send_verification_email(email: str, token: str) -> None:
 
 def send_password_reset_email(email: str, token: str) -> None:
     subject = "Reset your HomeSync Password"
-    link = f"{settings.SUPABASE_URL}/api/v1/auth/reset-password?token={token}"
+    link = f"{settings.BACKEND_URL}/api/v1/auth/reset-password?token={token}"
     html_content = f"""
     <h1>Password Reset Request</h1>
     <p>We received a request to reset your password. Click the link below to change your password:</p>
