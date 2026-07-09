@@ -15,6 +15,7 @@ import PaymentHistoryScreen from './screens/PaymentHistoryScreen';
 import ReceiptDetailScreen from './screens/ReceiptDetailScreen';
 import AdminDashboardScreen from './screens/AdminDashboardScreen';
 import RevenueOverviewScreen from './screens/RevenueOverviewScreen';
+import ResidencyOnboardingScreen from './screens/ResidencyOnboardingScreen';
 
 // Resident Screens
 import ResidentDashboardScreen from './screens/resident/ResidentDashboardScreen';
@@ -52,7 +53,7 @@ import RolesPermissionsScreen from './screens/superadmin/RolesPermissionsScreen'
 import NotificationTogglesScreen from './screens/superadmin/NotificationTogglesScreen';
 import AuditLogsScreen from './screens/superadmin/AuditLogsScreen';
 
-import { getAccessToken, getUserRole, deleteTokens } from './utils/storage';
+import { getAccessToken, getUserRole, saveTokens, deleteTokens } from './utils/storage';
 import { registerLogoutHandler, API_BASE_URL, apiClient } from './utils/api';
 
 const styles = StyleSheet.create({
@@ -96,6 +97,90 @@ const styles = StyleSheet.create({
   tabTextActive: {
     color: '#2F6FED',
   },
+  lockedContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: '#F8FAFC',
+  },
+  lockedIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  lockedTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  lockedSubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  pendingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: '#F8FAFC',
+  },
+  pendingBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#FEF3C7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  pendingBadgeIcon: {
+    fontSize: 32,
+  },
+  pendingTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  pendingSubtitle: {
+    fontSize: 15,
+    color: '#475569',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 6,
+  },
+  pendingTip: {
+    fontSize: 13,
+    color: '#94A3B8',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 32,
+  },
+  cancelRequestButton: {
+    backgroundColor: '#EF4444',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    marginBottom: 16,
+  },
+  cancelRequestText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  pendingLogoutButton: {
+    padding: 8,
+  },
+  pendingLogoutText: {
+    color: '#94A3B8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
 });
 
 type AppState = 'checking' | 'login' | 'register' | 'otp' | 'forgot_password' | 'reset_password' | 'dashboard';
@@ -118,14 +203,33 @@ function AppContent() {
   const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
   const [viewingRevenue, setViewingRevenue] = useState(false);
 
+  // Profile and OTP helper state
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [otpPurpose, setOtpPurpose] = useState<'register' | 'reset'>('register');
+
   // Register global API client logout callback
   useEffect(() => {
     registerLogoutHandler(() => {
       setUserRole(null);
+      setUserProfile(null);
       setAppState('login');
       setActiveScreen(null);
     });
   }, []);
+
+  const fetchUserProfile = async () => {
+    try {
+      setLoadingProfile(true);
+      const res = await apiClient.get('/residents/me/profile');
+      setUserProfile(res.data);
+      setUserRole(res.data.role?.name);
+    } catch (err) {
+      console.error('Failed to fetch user profile', err);
+    } finally {
+      setLoadingProfile(false);
+    }
+  };
 
   // Setup deep linking
   useEffect(() => {
@@ -159,6 +263,7 @@ function AppContent() {
           setUserRole(role);
           setAppState('dashboard');
           setCurrentTab('home');
+          fetchUserProfile();
         } else {
           setAppState('login');
         }
@@ -172,9 +277,16 @@ function AppContent() {
     }
   }, []);
 
+  useEffect(() => {
+    if (appState === 'dashboard') {
+      fetchUserProfile();
+    }
+  }, [appState]);
+
   const handleLogout = async () => {
     await deleteTokens();
     setUserRole(null);
+    setUserProfile(null);
     setAppState('login');
     setActiveScreen(null);
   };
@@ -183,10 +295,18 @@ function AppContent() {
     setUserRole(role);
     setAppState('dashboard');
     setCurrentTab('home');
+    fetchUserProfile();
   };
 
   const handleRegisterSuccess = (target: string) => {
     setOtpTarget(target);
+    setOtpPurpose('register');
+    setAppState('otp');
+  };
+
+  const handleForgotPasswordSuccess = (email: string) => {
+    setOtpTarget(email);
+    setOtpPurpose('reset');
     setAppState('otp');
   };
 
@@ -337,59 +457,141 @@ function AppContent() {
 
   // Dashboard stack tab view
   if (appState === 'dashboard' && userRole) {
+    const hasApprovedResidency = isSuperAdmin || (userProfile?.society_id && userProfile?.approval_status === 'APPROVED');
+    const hasPendingResidency = !isSuperAdmin && userProfile?.society_id && userProfile?.approval_status === 'PENDING';
+    const hasNoResidency = !isSuperAdmin && !userProfile?.society_id;
+
+    const renderLockedFeature = () => (
+      <View style={styles.lockedContainer}>
+        <Text style={styles.lockedIcon}>🔐</Text>
+        <Text style={styles.lockedTitle}>Feature Locked</Text>
+        <Text style={styles.lockedSubtitle}>
+          This feature becomes available after joining or creating a residency.
+        </Text>
+      </View>
+    );
+
+    const renderPendingResidency = () => (
+      <View style={styles.pendingContainer}>
+        <View style={styles.pendingBadge}>
+          <Text style={styles.pendingBadgeIcon}>⏳</Text>
+        </View>
+        <Text style={styles.pendingTitle}>Request Pending Approval</Text>
+        <Text style={styles.pendingSubtitle}>
+          Your request to join the society is pending approval from the Residency Owner.
+        </Text>
+        <Text style={styles.pendingTip}>
+          Once approved, all application modules will unlock automatically.
+        </Text>
+        
+        <TouchableOpacity
+          style={styles.cancelRequestButton}
+          activeOpacity={0.8}
+          onPress={async () => {
+            Alert.alert('Cancel Request', 'Are you sure you want to cancel your join request?', [
+              { text: 'No' },
+              {
+                text: 'Yes, Cancel',
+                onPress: async () => {
+                  try {
+                    await apiClient.put('/auth/profile', { society_id: null, flat_id: null });
+                    fetchUserProfile();
+                  } catch (err) {
+                    Alert.alert('Error', 'Failed to cancel request.');
+                  }
+                }
+              }
+            ]);
+          }}
+        >
+          <Text style={styles.cancelRequestText}>Cancel Request</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.pendingLogoutButton} onPress={handleLogout} activeOpacity={0.7}>
+          <Text style={styles.pendingLogoutText}>Sign Out</Text>
+        </TouchableOpacity>
+      </View>
+    );
+
     return (
       <View style={styles.container}>
         <StatusBar style="dark" />
         <View style={styles.mainContent}>
-          {currentTab === 'home' && (
-            isSuperAdmin ? (
-              <SuperAdminDashboardScreen onNavigateToScreen={(name, params) => setActiveScreen({ name, params })} onLogout={handleLogout} />
-            ) : isManagement ? (
-              <CommitteeDashboardScreen
-                onNavigateToTab={(tab) => setCurrentTab(tab as DashboardTab)}
-                onNavigateToScreen={(name, params) => setActiveScreen({ name, params })}
-              />
-            ) : (
-              <ResidentDashboardScreen
-                onNavigateToTab={(tab) => setCurrentTab(tab as DashboardTab)}
-                onNavigateToScreen={(name, params) => setActiveScreen({ name, params })}
-              />
-            )
-          )}
+          {loadingProfile && !userProfile ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#2F6FED" />
+            </View>
+          ) : (
+            <>
+              {currentTab === 'home' && (
+                hasNoResidency ? (
+                  <ResidencyOnboardingScreen onLogout={handleLogout} onRefreshProfile={fetchUserProfile} />
+                ) : hasPendingResidency ? (
+                  renderPendingResidency()
+                ) : (
+                  isSuperAdmin ? (
+                    <SuperAdminDashboardScreen onNavigateToScreen={(name, params) => setActiveScreen({ name, params })} onLogout={handleLogout} />
+                  ) : isManagement ? (
+                    <CommitteeDashboardScreen
+                      onNavigateToTab={(tab) => setCurrentTab(tab as DashboardTab)}
+                      onNavigateToScreen={(name, params) => setActiveScreen({ name, params })}
+                    />
+                  ) : (
+                    <ResidentDashboardScreen
+                      onNavigateToTab={(tab) => setCurrentTab(tab as DashboardTab)}
+                      onNavigateToScreen={(name, params) => setActiveScreen({ name, params })}
+                    />
+                  )
+                )
+              )}
 
-          {currentTab === 'bills' && !isSuperAdmin && (
-            selectedBillId ? (
-              <BillDetailsScreen
-                billId={selectedBillId}
-                onGoBack={() => setSelectedBillId(null)}
-                onPayNow={handlePayNow}
-              />
-            ) : (
-              <MyBillsScreen onSelectBill={(id) => setSelectedBillId(id)} />
-            )
-          )}
+              {currentTab === 'bills' && !isSuperAdmin && (
+                !hasApprovedResidency ? (
+                  renderLockedFeature()
+                ) : (
+                  selectedBillId ? (
+                    <BillDetailsScreen
+                      billId={selectedBillId}
+                      onGoBack={() => setSelectedBillId(null)}
+                      onPayNow={handlePayNow}
+                    />
+                  ) : (
+                    <MyBillsScreen onSelectBill={(id) => setSelectedBillId(id)} />
+                  )
+                )
+              )}
 
-          {currentTab === 'payments' && !isSuperAdmin && (
-            selectedPaymentId ? (
-              <ReceiptDetailScreen
-                paymentId={selectedPaymentId}
-                onGoBack={() => setSelectedPaymentId(null)}
-              />
-            ) : (
-              <PaymentHistoryScreen onSelectPayment={(id) => setSelectedPaymentId(id)} />
-            )
-          )}
+              {currentTab === 'payments' && !isSuperAdmin && (
+                !hasApprovedResidency ? (
+                  renderLockedFeature()
+                ) : (
+                  selectedPaymentId ? (
+                    <ReceiptDetailScreen
+                      paymentId={selectedPaymentId}
+                      onGoBack={() => setSelectedPaymentId(null)}
+                    />
+                  ) : (
+                    <PaymentHistoryScreen onSelectPayment={(id) => setSelectedPaymentId(id)} />
+                  )
+                )
+              )}
 
-          {currentTab === 'analytics' && (isSocietyAdmin || isSuperAdmin) && (
-            viewingRevenue ? (
-              <RevenueOverviewScreen onGoBack={() => setViewingRevenue(false)} />
-            ) : (
-              <AdminDashboardScreen onViewRevenue={() => setViewingRevenue(true)} />
-            )
-          )}
+              {currentTab === 'analytics' && (isSocietyAdmin || isSuperAdmin) && (
+                !hasApprovedResidency ? (
+                  renderLockedFeature()
+                ) : (
+                  viewingRevenue ? (
+                    <RevenueOverviewScreen onGoBack={() => setViewingRevenue(false)} />
+                  ) : (
+                    <AdminDashboardScreen onViewRevenue={() => setViewingRevenue(true)} />
+                  )
+                )
+              )}
 
-          {currentTab === 'profile' && (
-            <ProfileScreen onLogout={handleLogout} />
+              {currentTab === 'profile' && (
+                <ProfileScreen onLogout={handleLogout} />
+              )}
+            </>
           )}
         </View>
 
@@ -489,8 +691,30 @@ function AppContent() {
           <OtpVerificationScreen
             apiBaseUrl={API_BASE_URL}
             target={otpTarget}
-            onVerificationSuccess={() => setAppState('login')}
-            onNavigateBack={() => setAppState('register')}
+            purpose={otpPurpose}
+            onVerificationSuccess={async (token, access_token, refresh_token, role) => {
+              if (otpPurpose === 'reset') {
+                setResetToken(token || '');
+                setAppState('reset_password');
+              } else {
+                // Auto login on successful register
+                if (access_token && refresh_token && role) {
+                  await saveTokens(access_token, refresh_token);
+                  setUserRole(role);
+                  setAppState('dashboard');
+                  setCurrentTab('home');
+                } else {
+                  setAppState('login');
+                }
+              }
+            }}
+            onNavigateBack={() => {
+              if (otpPurpose === 'reset') {
+                setAppState('forgot_password');
+              } else {
+                setAppState('register');
+              }
+            }}
           />
           <StatusBar style="auto" />
         </>

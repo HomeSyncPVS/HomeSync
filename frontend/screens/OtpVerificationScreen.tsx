@@ -13,13 +13,15 @@ import { StyleSheet,
 
 interface OtpVerificationScreenProps {
   target: string; // The email/phone number destination
-  onVerificationSuccess: () => void;
+  purpose?: 'register' | 'reset';
+  onVerificationSuccess: (token?: string, access_token?: string, refresh_token?: string, role?: string) => void;
   onNavigateBack: () => void;
   apiBaseUrl?: string;
 }
 
 export default function OtpVerificationScreen({
   target,
+  purpose = 'register',
   onVerificationSuccess,
   onNavigateBack,
   apiBaseUrl = 'http://10.0.2.2:8000/api/v1',
@@ -64,7 +66,7 @@ export default function OtpVerificationScreen({
         },
         body: JSON.stringify({
           target: target,
-          purpose: 'register',
+          purpose: purpose,
         }),
       });
 
@@ -127,7 +129,7 @@ export default function OtpVerificationScreen({
         body: JSON.stringify({
           target: target,
           code: fullCode,
-          purpose: 'register',
+          purpose: purpose,
         }),
       });
 
@@ -137,10 +139,10 @@ export default function OtpVerificationScreen({
         throw new Error(data.detail || 'Verification failed. Try again.');
       }
 
-      setSuccessMessage('Account verified successfully!');
+      setSuccessMessage(purpose === 'reset' ? 'OTP verified successfully!' : 'Account verified successfully!');
       // Let app navigate or switch state
       setTimeout(() => {
-        onVerificationSuccess();
+        onVerificationSuccess(data.token, data.access_token, data.refresh_token, data.user?.role?.name);
       }, 1000);
     } catch (err: any) {
       setErrorMessage(err.message || 'Incorrect OTP code or expired.');
@@ -168,7 +170,9 @@ export default function OtpVerificationScreen({
 
           {/* Header */}
           <View style={styles.headerContainer}>
-            <Text style={styles.titleText}>Verify Account</Text>
+            <Text style={styles.titleText}>
+              {purpose === 'reset' ? 'Reset Password' : 'Verify Account'}
+            </Text>
             <Text style={styles.subtitleText}>
               We sent a 6-digit verification code to your registered destination:
             </Text>

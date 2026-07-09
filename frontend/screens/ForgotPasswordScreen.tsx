@@ -51,7 +51,7 @@ export default function ForgotPasswordScreen({
         throw new Error(data.detail || 'Failed to send recovery instructions.');
       }
 
-      setSuccess(true);
+      onSuccess(email.trim());
     } catch (err: any) {
       setErrorMessage(err.message || 'An error occurred. Please try again.');
     } finally {
