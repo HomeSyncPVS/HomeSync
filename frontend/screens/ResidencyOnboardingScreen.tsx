@@ -100,8 +100,8 @@ export default function ResidencyOnboardingScreen({
         join_code: joinCode.trim(),
         flat_id: selectedFlatId,
       });
-      Alert.alert('Request Sent', 'Your join request has been submitted. All features will unlock once approved by the Residency Owner.', [
-        { text: 'OK', onPress: onRefreshProfile }
+      Alert.alert('Residency Joined', 'You have successfully joined the residency! All features have been unlocked.', [
+        { text: 'Great!', onPress: onRefreshProfile }
       ]);
     } catch (err: any) {
       Alert.alert('Request Failed', err.response?.data?.detail || 'Failed to submit join request.');

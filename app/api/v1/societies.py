@@ -414,8 +414,8 @@ async def join_society(
     # Update user's residency association
     current_user.society_id = society.id
     current_user.flat_id = flat.id
-    current_user.approval_status = "PENDING"
+    current_user.approval_status = "APPROVED"
     db.add(current_user)
     await db.commit()
 
-    return SuccessResponse(message="Join request submitted successfully. Pending owner approval.")
+    return SuccessResponse(message="Joined residency successfully.")
