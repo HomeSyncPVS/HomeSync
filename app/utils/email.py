@@ -1,6 +1,8 @@
 import logging
 import smtplib
 import asyncio
+import socket
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
@@ -8,70 +10,178 @@ from app.core.config import settings
 logger = logging.getLogger("homesync.email")
 
 
+def verify_smtp_connectivity() -> bool:
+    """
+    Standalone SMTP connectivity test run during application startup.
+    Performs DNS resolution and attempts a brief TCP connection test
+    to verify network access to the SMTP server.
+    Logs success or specific failure reasons (e.g. DNS, connection timeout, port blocked).
+    """
+    smtp_host = settings.SMTP_HOST
+    smtp_port = settings.SMTP_PORT or 587
+    
+    if not smtp_host:
+        logger.warning("[SMTP Startup Check] SMTP_HOST is not configured. Standalone email service is disabled (running in DEV MOCK mode).")
+        return False
+        
+    logger.info(f"[SMTP Startup Check] Starting SMTP connectivity test for {smtp_host}:{smtp_port}...")
+    
+    # 1. DNS Resolution
+    try:
+        ip = socket.gethostbyname(smtp_host)
+        logger.info(f"[SMTP Startup Check] DNS resolved successfully: {smtp_host} -> {ip}")
+    except socket.gaierror as e:
+        logger.error(
+            f"[SMTP Startup Check] DNS resolution failed for {smtp_host}: {str(e)}. "
+            "Please check if the hostname is correct and that the host machine has outbound DNS/internet access."
+        )
+        return False
+
+    # 2. Outbound Network Connectivity Check
+    try:
+        s = socket.create_connection((smtp_host, smtp_port), timeout=5.0)
+        s.close()
+        logger.info(f"[SMTP Startup Check] Success! Outbound TCP connection to {smtp_host}:{smtp_port} established.")
+        return True
+    except socket.timeout:
+        logger.error(
+            f"[SMTP Startup Check] Connection timeout to {smtp_host}:{smtp_port}. "
+            "This indicates outbound TCP traffic is being blocked at the firewall level. "
+            "NOTE: Railway trial/hobby plans block ports 25, 465, and 587 by default. "
+            "To resolve this, upgrade to a Pro plan or configure an SMTP relay using port 2525."
+        )
+        return False
+    except ConnectionRefusedError:
+        logger.error(
+            f"[SMTP Startup Check] Connection refused by {smtp_host}:{smtp_port}. "
+            "Verify that the port number is correct and that the destination server is accepting connections on this port."
+        )
+        return False
+    except OSError as e:
+        logger.error(
+            f"[SMTP Startup Check] Network connectivity failure connecting to {smtp_host}:{smtp_port}: {str(e)}. "
+            "If you see '[Errno 101] Network is unreachable', it confirms that Railway's outbound SMTP blocking "
+            "is active on your current hosting tier."
+        )
+        return False
+
+
 def _send_smtp_sync(to_email: str, subject: str, html_content: str) -> None:
     """
     Synchronous SMTP helper to be run in a separate thread.
+    Includes proper connection timeout, retry logic, and detailed error logging.
     """
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    
-    from_name = settings.SMTP_FROM_NAME or settings.EMAILS_FROM_NAME or "HomeSync"
-    from_email = settings.SMTP_FROM_EMAIL or settings.EMAILS_FROM_EMAIL or settings.SMTP_USERNAME or settings.SMTP_USER
-    if not from_email:
-        raise ValueError("SMTP sender email address is not configured. Set SMTP_FROM_EMAIL or SMTP_USERNAME in environment.")
-        
-    msg["From"] = f"{from_name} <{from_email}>"
-    msg["To"] = to_email
-
-    part = MIMEText(html_content, "html")
-    msg.attach(part)
-
     smtp_host = settings.SMTP_HOST
     if not smtp_host:
-        raise ValueError("SMTP host is not configured. Set SMTP_HOST in environment.")
+        raise ValueError("SMTP_HOST is not configured.")
         
     smtp_port = settings.SMTP_PORT or 587
     smtp_user = settings.SMTP_USERNAME or settings.SMTP_USER
     smtp_password = settings.SMTP_PASSWORD
+    from_name = settings.SMTP_FROM_NAME or settings.EMAILS_FROM_NAME or "HomeSync"
+    from_email = settings.SMTP_FROM_EMAIL or settings.EMAILS_FROM_EMAIL or smtp_user
 
-    logger.info(f"Connecting to SMTP server {smtp_host}:{smtp_port}...")
-    
-    if smtp_port == 465:
-        try:
-            server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15.0)
-        except Exception as e:
-            logger.error(f"Failed to initiate SMTP_SSL connection to {smtp_host}:{smtp_port}: {str(e)}")
-            raise e
-    else:
-        try:
-            server = smtplib.SMTP(smtp_host, smtp_port, timeout=15.0)
-        except Exception as e:
-            logger.error(f"Failed to initiate SMTP connection to {smtp_host}:{smtp_port}: {str(e)}")
-            raise e
-        
+    if not from_email:
+        raise ValueError("SMTP sender email address is not configured. Set SMTP_FROM_EMAIL or SMTP_USERNAME in environment.")
+
+    # Create message
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"{from_name} <{from_email}>"
+    msg["To"] = to_email
+    part = MIMEText(html_content, "html")
+    msg.attach(part)
+
+    # 1. DNS Resolution
     try:
-        if smtp_port != 465:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            
-        if smtp_user and smtp_password:
-            try:
-                server.login(smtp_user, smtp_password)
-            except smtplib.SMTPAuthenticationError as e:
-                logger.error(f"SMTP authentication failed for user {smtp_user}: {str(e)}")
-                raise e
-            
-        server.sendmail(from_email, [to_email], msg.as_string())
-        logger.info(f"Email sent successfully via SMTP to {to_email}")
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP error occurred during sending: {str(e)}")
-        raise e
-    finally:
+        socket.gethostbyname(smtp_host)
+    except socket.gaierror as e:
+        logger.error(f"[SMTP DNS Error] Resolution failed for host {smtp_host}: {str(e)}")
+        raise Exception(f"SMTP DNS resolution failed for {smtp_host}. Please check if the SMTP hostname is correct.")
+
+    max_retries = 3
+    retry_delay = 2.0
+    last_err = None
+
+    for attempt in range(1, max_retries + 1):
+        server = None
         try:
-            server.quit()
-        except Exception:
-            pass
+            logger.info(f"[SMTP Send] Connecting to {smtp_host}:{smtp_port} (Attempt {attempt}/{max_retries})...")
+            
+            # Connect based on protocol logic (Port 465 SSL, Port 587 STARTTLS)
+            if smtp_port == 465:
+                try:
+                    server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10.0)
+                except Exception as e:
+                    logger.error(f"[SMTP SSL Error] SSL handshake/connection failed: {str(e)}")
+                    raise Exception(f"SSL handshake/connection to {smtp_host}:{smtp_port} failed: {str(e)}")
+            else:
+                server = smtplib.SMTP(smtp_host, smtp_port, timeout=10.0)
+
+            # Protocol handshake & TLS
+            try:
+                if smtp_port != 465:
+                    server.ehlo()
+                    server.starttls()
+                    server.ehlo()
+            except Exception as e:
+                logger.error(f"[SMTP TLS Error] TLS negotiation failed on port {smtp_port}: {str(e)}")
+                raise Exception(f"TLS negotiation failed: {str(e)}")
+
+            # Login
+            if smtp_user and smtp_password:
+                try:
+                    server.login(smtp_user, smtp_password)
+                except smtplib.SMTPAuthenticationError as e:
+                    logger.error(f"[SMTP Auth Error] Authentication failed for user {smtp_user}: {str(e)}")
+                    raise Exception(
+                        f"SMTP Authentication failed (username: {smtp_user}). "
+                        "If using Gmail, verify 2-Step Verification is enabled and a valid Google App Password is configured. "
+                        f"Details: {str(e)}"
+                    )
+
+            # Send Email
+            try:
+                server.sendmail(from_email, [to_email], msg.as_string())
+            except Exception as e:
+                logger.error(f"[SMTP Transmission Error] Failed to send raw message payload: {str(e)}")
+                raise Exception(f"Failed to transmit email: {str(e)}")
+                
+            logger.info(f"[SMTP Success] Email sent successfully to {to_email} on attempt {attempt}")
+            return  # Successful transmission!
+
+        except socket.timeout:
+            last_err = Exception(
+                f"SMTP connection timeout on port {smtp_port}. "
+                "This indicates outbound TCP traffic is being blocked or dropped by the hosting network firewall. "
+                "Note: Railway blocks ports 25, 465, and 587 on Hobby/Trial plans."
+            )
+        except OSError as e:
+            if getattr(e, 'errno', None) == 101 or "Network is unreachable" in str(e):
+                last_err = Exception(
+                    "Network is unreachable ([Errno 101]). "
+                    "Outbound SMTP traffic to standard ports (25, 465, 587) is blocked by the Railway firewall on Hobby/Trial tiers. "
+                    "Upgrade your Railway plan or use an alternative port like 2525."
+                )
+            else:
+                last_err = Exception(f"SMTP network error: {str(e)}")
+        except Exception as e:
+            last_err = e
+        finally:
+            if server:
+                try:
+                    server.quit()
+                except Exception:
+                    pass
+
+        if attempt < max_retries:
+            logger.warning(f"[SMTP Retry] Attempt {attempt} failed: {str(last_err)}. Retrying in {retry_delay}s...")
+            time.sleep(retry_delay)
+            retry_delay *= 2.0
+
+    # Raise final error after retries are exhausted
+    logger.error(f"[SMTP Failure] All SMTP attempts exhausted. Final Error: {str(last_err)}")
+    raise last_err
 
 
 async def send_email(to_email: str, subject: str, html_content: str) -> None:
@@ -93,7 +203,7 @@ async def send_email(to_email: str, subject: str, html_content: str) -> None:
     except Exception as e:
         logger.error(f"Error sending email to {to_email} via SMTP: {str(e)}", exc_info=True)
         from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail=f"Email SMTP Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def send_password_reset_email(email: str, token: str) -> None:

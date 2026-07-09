@@ -141,9 +141,13 @@ async def lifespan(app: FastAPI):
     FastAPI lifespan manager handles startup and shutdown logic.
     """
     import sys
+    import asyncio
     # Seeding database on startup (skip if running tests to avoid greenlet context issues)
     if "pytest" not in sys.modules:
         await seed_database()
+        # Standalone SMTP test function that verifies connectivity during application startup and logs the result
+        from app.utils.email import verify_smtp_connectivity
+        asyncio.create_task(asyncio.to_thread(verify_smtp_connectivity))
     yield
     # Shutdown logic if any goes here
 
