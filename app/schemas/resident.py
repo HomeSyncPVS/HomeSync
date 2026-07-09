@@ -131,6 +131,19 @@ class ResidentApprovalRequest(BaseModel):
         return upper_v
 
 
+class WingBriefResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+
+
+class FloorBriefResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    floor_number: int
+    wing: Optional[WingBriefResponse] = None
+
+
 class FlatBriefResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -138,6 +151,7 @@ class FlatBriefResponse(BaseModel):
     flat_number: str
     flat_type: str
     occupancy_status: str
+    floor: Optional[FloorBriefResponse] = None
 
 
 class SocietyBriefResponse(BaseModel):

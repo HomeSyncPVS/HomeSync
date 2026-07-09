@@ -49,9 +49,11 @@ export default function ResidentDashboardScreen({
   const fetchDashboardData = async () => {
     try {
       setErrorMessage(null);
-      // Fetch profile & dashboard stats from backend
-      const profileRes = await apiClient.get('/residents/me/profile');
-      const statsRes = await apiClient.get('/residents/me/dashboard');
+      // Fetch profile & dashboard stats from backend in parallel
+      const [profileRes, statsRes] = await Promise.all([
+        apiClient.get('/residents/me/profile'),
+        apiClient.get('/residents/me/dashboard')
+      ]);
       
       const profile = profileRes.data;
       const stats = statsRes.data;

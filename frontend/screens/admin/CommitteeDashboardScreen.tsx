@@ -50,23 +50,16 @@ export default function CommitteeDashboardScreen({
         return;
       }
 
-      // Fetch complaints list to count open tickets
-      const complaintsRes = await apiClient.get(`/complaints/?society_id=${societyId}`);
+      // Fetch complaints, events, and residents in parallel!
+      const [complaintsRes, eventsRes, residentsResResult] = await Promise.all([
+        apiClient.get(`/complaints/?society_id=${societyId}`),
+        apiClient.get(`/events/?society_id=${societyId}`),
+        apiClient.get(`/residents?society_id=${societyId}`).catch(() => ({ data: [] }))
+      ]);
+
       const openCount = complaintsRes.data.filter((c: any) => c.status === 'OPEN' || c.status === 'IN_PROGRESS').length;
-
-      // Fetch events list to count upcoming events
-      const eventsRes = await apiClient.get(`/events/?society_id=${societyId}`);
       const upcomingCount = eventsRes.data.filter((e: any) => new Date(e.date_time) > new Date()).length;
-
-      // Fetch residents directory count
-      let residentsCount = 0;
-      try {
-        const residentsRes = await apiClient.get(`/residents?society_id=${societyId}`);
-        residentsCount = residentsRes.data.length;
-      } catch (e) {
-        // Fallback if role is not fully elevated to Society Admin (e.g. Committee Member lacks GET /residents)
-        residentsCount = 0;
-      }
+      const residentsCount = residentsResResult.data.length;
 
       setStats({
         openComplaints: openCount,

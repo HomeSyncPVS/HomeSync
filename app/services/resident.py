@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 from sqlalchemy import select, or_, and_, func
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -54,7 +54,7 @@ class ResidentService:
             .options(
                 selectinload(User.family_members),
                 selectinload(User.vehicles),
-                selectinload(User.flat),
+                joinedload(User.flat).joinedload("floor").joinedload("wing"),
             )
         )
         result = await db.execute(query)
