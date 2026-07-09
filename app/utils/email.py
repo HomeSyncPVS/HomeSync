@@ -1,7 +1,6 @@
 import logging
 import smtplib
 import asyncio
-import httpx
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
@@ -16,8 +15,11 @@ def _send_smtp_sync(to_email: str, subject: str, html_content: str) -> None:
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     
-    from_name = settings.EMAILS_FROM_NAME or "HomeSync"
-    from_email = settings.EMAILS_FROM_EMAIL or settings.SMTP_USER or "noreply@homesync.com"
+    from_name = settings.SMTP_FROM_NAME or settings.EMAILS_FROM_NAME or "HomeSync"
+    from_email = settings.SMTP_FROM_EMAIL or settings.EMAILS_FROM_EMAIL or settings.SMTP_USERNAME or settings.SMTP_USER
+    if not from_email:
+        raise ValueError("SMTP sender email address is not configured. Set SMTP_FROM_EMAIL or SMTP_USERNAME in environment.")
+        
     msg["From"] = f"{from_name} <{from_email}>"
     msg["To"] = to_email
 
@@ -25,12 +27,27 @@ def _send_smtp_sync(to_email: str, subject: str, html_content: str) -> None:
     msg.attach(part)
 
     smtp_host = settings.SMTP_HOST
+    if not smtp_host:
+        raise ValueError("SMTP host is not configured. Set SMTP_HOST in environment.")
+        
     smtp_port = settings.SMTP_PORT or 587
+    smtp_user = settings.SMTP_USERNAME or settings.SMTP_USER
+    smtp_password = settings.SMTP_PASSWORD
 
+    logger.info(f"Connecting to SMTP server {smtp_host}:{smtp_port}...")
+    
     if smtp_port == 465:
-        server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10.0)
+        try:
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15.0)
+        except Exception as e:
+            logger.error(f"Failed to initiate SMTP_SSL connection to {smtp_host}:{smtp_port}: {str(e)}")
+            raise e
     else:
-        server = smtplib.SMTP(smtp_host, smtp_port, timeout=10.0)
+        try:
+            server = smtplib.SMTP(smtp_host, smtp_port, timeout=15.0)
+        except Exception as e:
+            logger.error(f"Failed to initiate SMTP connection to {smtp_host}:{smtp_port}: {str(e)}")
+            raise e
         
     try:
         if smtp_port != 465:
@@ -38,71 +55,45 @@ def _send_smtp_sync(to_email: str, subject: str, html_content: str) -> None:
             server.starttls()
             server.ehlo()
             
-        if settings.SMTP_USER and settings.SMTP_PASSWORD:
-            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        if smtp_user and smtp_password:
+            try:
+                server.login(smtp_user, smtp_password)
+            except smtplib.SMTPAuthenticationError as e:
+                logger.error(f"SMTP authentication failed for user {smtp_user}: {str(e)}")
+                raise e
             
         server.sendmail(from_email, [to_email], msg.as_string())
+        logger.info(f"Email sent successfully via SMTP to {to_email}")
+    except smtplib.SMTPException as e:
+        logger.error(f"SMTP error occurred during sending: {str(e)}")
+        raise e
     finally:
-        server.quit()
+        try:
+            server.quit()
+        except Exception:
+            pass
 
 
 async def send_email(to_email: str, subject: str, html_content: str) -> None:
     """
-    Send an HTML email.
-    If RESEND_API_KEY is configured, sends via Resend HTTP API (avoids blocked cloud SMTP ports).
-    Otherwise, falls back to SMTP if SMTP_HOST is set, or dev log mock.
+    Send an HTML email via SMTP only.
     """
-    # 1. Try Resend HTTP API (strongly recommended for cloud hosting platforms like Railway/Render)
-    if settings.RESEND_API_KEY:
-        from_address = "HomeSync <onboarding@resend.dev>"
-        payload = {
-            "from": from_address,
-            "to": [to_email],
-            "subject": subject,
-            "html": html_content
-        }
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    "https://api.resend.com/emails",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"}
-                )
-                if response.status_code >= 400:
-                    err_msg = response.text
-                    try:
-                        err_json = response.json()
-                        if "message" in err_json:
-                            err_msg = err_json["message"]
-                    except Exception:
-                        pass
-                    raise Exception(f"Resend error ({response.status_code}): {err_msg}")
-            logger.info(f"Email sent to {to_email} successfully via Resend API.")
-            return
-        except Exception as e:
-            logger.error(f"Error sending email to {to_email} via Resend: {str(e)}", exc_info=True)
-            from fastapi import HTTPException
-            raise HTTPException(status_code=500, detail=f"Email API Error: {str(e)}")
+    if not settings.SMTP_HOST:
+        logger.warning(
+            f"\n--- [DEVELOPMENT EMAIL MOCK] ---\n"
+            f"To: {to_email}\n"
+            f"Subject: {subject}\n"
+            f"Body:\n{html_content}\n"
+            f"---------------------------------\n"
+        )
+        return
 
-    # 2. Try SMTP fallback
-    if settings.SMTP_HOST:
-        try:
-            await asyncio.to_thread(_send_smtp_sync, to_email, subject, html_content)
-            logger.info(f"Email sent to {to_email} successfully via SMTP.")
-            return
-        except Exception as e:
-            logger.error(f"Error sending email to {to_email} via SMTP: {str(e)}", exc_info=True)
-            from fastapi import HTTPException
-            raise HTTPException(status_code=500, detail=f"Email SMTP Error: {str(e)}")
-
-    # 3. Development mock log fallback
-    logger.warning(
-        f"\n--- [DEVELOPMENT EMAIL MOCK] ---\n"
-        f"To: {to_email}\n"
-        f"Subject: {subject}\n"
-        f"Body:\n{html_content}\n"
-        f"---------------------------------\n"
-    )
+    try:
+        await asyncio.to_thread(_send_smtp_sync, to_email, subject, html_content)
+    except Exception as e:
+        logger.error(f"Error sending email to {to_email} via SMTP: {str(e)}", exc_info=True)
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Email SMTP Error: {str(e)}")
 
 
 async def send_password_reset_email(email: str, token: str) -> None:
