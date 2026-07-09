@@ -16,6 +16,19 @@ settings_repo = SocietySettingsRepository()
 
 class SocietyService:
     @staticmethod
+    async def generate_join_code(db: AsyncSession) -> str:
+        import random
+        import string
+        from sqlalchemy import select
+        
+        while True:
+            code = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+            query = select(Society).where(Society.join_code == code)
+            result = await db.execute(query)
+            if not result.scalar_one_or_none():
+                return code
+
+    @staticmethod
     async def create_society(db: AsyncSession, data: SocietyCreate, user_id: Optional[uuid.UUID] = None) -> Society:
         # Check uniqueness of society name inside the region
         existing = await society_repo.get_by_name_and_region(db, data.name, data.region)
@@ -24,6 +37,9 @@ class SocietyService:
                 detail=f"A society named '{data.name}' already exists in the region '{data.region}'.",
                 error_code="SOCIETY_ALREADY_EXISTS"
             )
+
+        # Generate unique join code
+        join_code = await SocietyService.generate_join_code(db)
 
         # Create society
         society_obj = Society(
@@ -35,10 +51,12 @@ class SocietyService:
             pincode=data.pincode,
             phone=data.phone,
             email=data.email,
+            join_code=join_code,
             created_by=user_id,
             updated_by=user_id
         )
         society = await society_repo.create(db, obj_in=society_obj)
+        await db.flush()
 
         # Automatically create default society settings
         settings_obj = SocietySettings(
@@ -47,6 +65,79 @@ class SocietyService:
             updated_by=user_id
         )
         await settings_repo.create(db, obj_in=settings_obj)
+        await db.flush()
+
+        # Generate structure (Wings, Floors, Flats) if provided
+        if data.structure:
+            from app.models.wing import Wing
+            from app.models.floor import Floor
+            from app.models.flat import Flat
+
+            num_wings = data.structure.num_wings
+            wing_names = data.structure.wing_names or [f"Wing {i}" for i in range(1, num_wings + 1)]
+            
+            # Pad or truncate wing names
+            wing_names = wing_names[:num_wings]
+            if len(wing_names) < num_wings:
+                wing_names += [f"Wing {i}" for i in range(len(wing_names) + 1, num_wings + 1)]
+
+            for wing_name in wing_names:
+                wing_obj = Wing(
+                    society_id=society.id,
+                    name=wing_name,
+                    created_by=user_id,
+                    updated_by=user_id
+                )
+                db.add(wing_obj)
+                await db.flush()
+
+                for floor_num in range(1, data.structure.floors_per_wing + 1):
+                    floor_obj = Floor(
+                        wing_id=wing_obj.id,
+                        floor_number=floor_num,
+                        created_by=user_id,
+                        updated_by=user_id
+                    )
+                    db.add(floor_obj)
+                    await db.flush()
+
+                    for flat_idx in range(1, data.structure.flats_per_floor + 1):
+                        flat_num = f"{wing_name}-{floor_num}{flat_idx:02d}"
+                        flat_obj = Flat(
+                            floor_id=floor_obj.id,
+                            wing_id=wing_obj.id,
+                            society_id=society.id,
+                            flat_number=flat_num,
+                            flat_type=data.structure.flat_type,
+                            flat_size=data.structure.flat_size,
+                            occupancy_status="VACANT",
+                            created_by=user_id,
+                            updated_by=user_id
+                        )
+                        db.add(flat_obj)
+            await db.flush()
+
+        # Promote creator to Society Admin
+        if user_id:
+            from app.models.user import User
+            from app.models.role import Role
+            from app.core.constants import RoleEnum
+            from sqlalchemy import select
+
+            query = select(User).where(User.id == user_id)
+            result = await db.execute(query)
+            user = result.scalar_one_or_none()
+            if user:
+                role_query = select(Role).where(Role.name == RoleEnum.SOCIETY_ADMIN.value)
+                role_result = await db.execute(role_query)
+                admin_role = role_result.scalar_one_or_none()
+                if admin_role:
+                    user.role_id = admin_role.id
+                user.society_id = society.id
+                user.approval_status = "APPROVED"
+                db.add(user)
+                await db.flush()
+
         await db.commit()
         return society
 
@@ -215,3 +306,13 @@ class SocietyService:
         db.add(society)
         await db.commit()
         return await SocietyService.get_society(db, id)
+
+    @staticmethod
+    async def get_society_by_join_code(db: AsyncSession, code: str) -> Society:
+        from sqlalchemy import select
+        query = select(Society).where(Society.join_code == code.upper().strip(), Society.deleted_at.is_(None))
+        result = await db.execute(query)
+        society = result.scalar_one_or_none()
+        if not society:
+            raise NotFoundError(detail="Society not found for the specified join code.", error_code="SOCIETY_NOT_FOUND")
+        return society

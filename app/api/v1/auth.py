@@ -40,6 +40,7 @@ from app.schemas.auth import (
     ChangePasswordRequest,
     SendOtpRequest,
     VerifyOtpRequest,
+    VerifyOtpResponse,
     RefreshTokenRequest,
     UserResponse,
     SessionResponse,
@@ -129,22 +130,74 @@ async def send_otp(data: SendOtpRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post(
     "/verify-otp",
-    response_model=SuccessResponse,
+    response_model=VerifyOtpResponse,
     summary="Verify OTP Code",
     description="Verify an OTP code for a user verification step (registration, password reset, etc.).",
     dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
-async def verify_otp(data: VerifyOtpRequest, db: AsyncSession = Depends(get_db)):
+async def verify_otp(
+    request: Request,
+    data: VerifyOtpRequest,
+    db: AsyncSession = Depends(get_db)
+):
     await OTPService.verify_otp(db, data.target, data.code, data.purpose.value)
+    
+    token = None
+    access_token = None
+    refresh_token = None
+    session_id = None
+    user_response = None
     
     if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
         user = await user_repo.get_by_email(db, data.target)
-        if user and not user.is_verified:
-            user.is_verified = True
-            db.add(user)
+        if user:
+            if not user.is_verified:
+                user.is_verified = True
+                db.add(user)
+                await db.flush()
+            
+            # Automatically create a session for the user (auto-login)
+            ip_address = request.client.host if request.client else None
+            user_agent = request.headers.get("user-agent")
+            session_data = await AuthService.create_session_for_user(db, user, ip_address, user_agent)
+            
+            access_token = session_data["access_token"]
+            refresh_token = session_data["refresh_token"]
+            session_id = session_data["session_id"]
+            user_response = UserResponse.model_validate(session_data["user"])
+
+    elif data.purpose.value == OtpPurpose.RESET.value:
+        user = await user_repo.get_by_email(db, data.target)
+        if user:
+            # Generate random token
+            from app.utils.security import generate_random_token
+            from app.core.security import hash_token
+            from app.models.password_reset import PasswordReset
+            from datetime import datetime, timedelta, timezone
+            
+            token = generate_random_token()
+            token_hash = hash_token(token)
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            
+            reset_obj = PasswordReset(
+                user_id=user.id,
+                token_hash=token_hash,
+                expires_at=expires_at,
+                is_used=False
+            )
+            db.add(reset_obj)
             await db.flush()
             
-    return SuccessResponse(message="OTP verified successfully.")
+    await db.commit()
+    return VerifyOtpResponse(
+        success=True,
+        message="OTP verified successfully.",
+        token=token,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        session_id=session_id,
+        user=user_response
+    )
 
 
 @router.post(

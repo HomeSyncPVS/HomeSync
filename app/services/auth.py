@@ -203,6 +203,65 @@ class AuthService:
         }
 
     @staticmethod
+    async def create_session_for_user(
+        db: AsyncSession,
+        user: User,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        # Enforce max 3 active sessions
+        active_sessions = await session_repo.get_active_sessions_by_user_id(db, user.id)
+        if len(active_sessions) >= 3:
+            to_revoke_count = len(active_sessions) - 2
+            for i in range(to_revoke_count):
+                oldest_session = active_sessions[i]
+                oldest_session.is_active = False
+                db.add(oldest_session)
+            await db.flush()
+
+        # Create new session
+        session_id = uuid.uuid4()
+        temp_refresh_token = create_refresh_token(
+            user_id=str(user.id),
+            session_id=str(session_id),
+            token_version=1
+        )
+        refresh_hash = hash_token(temp_refresh_token)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+        new_session = Session(
+            id=session_id,
+            user_id=user.id,
+            refresh_token_hash=refresh_hash,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            token_version=1,
+            is_active=True,
+            expires_at=expires_at,
+        )
+        await session_repo.create(db, obj_in=new_session)
+        await db.flush()
+
+        # Prepare permissions list
+        user_permissions = [p.name for p in user.role.permissions]
+
+        # Generate access token
+        access_token = create_access_token(
+            user_id=str(user.id),
+            society_id=str(user.society_id) if user.society_id else None,
+            role=user.role.name,
+            permissions=user_permissions,
+            session_id=str(session_id),
+        )
+
+        return {
+            "access_token": access_token,
+            "refresh_token": temp_refresh_token,
+            "session_id": session_id,
+            "user": user,
+        }
+
+    @staticmethod
     async def refresh_access_token(db: AsyncSession, refresh_token: str) -> Dict[str, str]:
         """
         Validate refresh token, check for reuse/replay attack, update/rotate refresh token,
@@ -298,7 +357,7 @@ class AuthService:
     @staticmethod
     async def request_password_reset(db: AsyncSession, email: str) -> None:
         """
-        Generate password reset token and email it to the user.
+        Generate and send an OTP code for password reset.
         """
         user = await user_repo.get_by_email(db, email)
         if not user:
@@ -306,23 +365,9 @@ class AuthService:
             # do not throw error. Just log and return success.
             return
 
-        # Invalidate existing reset tokens
-        # Typically we just let it overwrite or clear, but for simplicity
-        # we can just write a new token.
-        token = generate_random_token()
-        token_hash = hash_token(token)
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
-
-        reset_obj = PasswordReset(
-            user_id=user.id,
-            token_hash=token_hash,
-            expires_at=expires_at,
-            is_used=False
-        )
-        db.add(reset_obj)
-        await db.flush()
-
-        await send_password_reset_email(user.email, token)
+        from app.services.otp import OTPService
+        from app.core.constants import OtpPurpose
+        await OTPService.generate_and_send_otp(db, email, OtpPurpose.RESET.value)
 
     @staticmethod
     async def reset_password(db: AsyncSession, token: str, new_password: str) -> None:

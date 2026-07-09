@@ -154,3 +154,13 @@ class UserUpdateRequest(BaseModel):
 class TokenValidationResponse(BaseModel):
     valid: bool
     payload: Optional[dict] = None
+
+
+class VerifyOtpResponse(BaseModel):
+    success: bool = True
+    message: str
+    token: Optional[str] = None
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    session_id: Optional[uuid.UUID] = None
+    user: Optional[UserResponse] = None

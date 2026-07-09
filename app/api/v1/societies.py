@@ -12,9 +12,15 @@ from app.schemas.society import (
     SocietyUpdate,
     SocietyResponse,
     SocietySettingsResponse,
-    SocietySettingsUpdate
+    SocietySettingsUpdate,
+    SocietyJoinVerifyResponse,
+    WingJoinInfo,
+    FloorJoinInfo,
+    FlatJoinInfo
 )
 from app.services.society import SocietyService
+from app.exceptions.custom import NotFoundError
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/societies", tags=["Societies"])
 
@@ -60,7 +66,7 @@ def require_admin(user: User = Depends(get_current_active_user)) -> User:
     response_model=SocietyResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new society",
-    description="Creates a new society and automatically initializes default settings for it. Requires Admin or Super Admin privileges.",
+    description="Creates a new society and automatically initializes default settings for it. Requires authenticated session.",
     responses={
         201: {"model": SocietyResponse, "description": "Society created successfully"},
         400: {"model": ErrorResponse, "description": "Invalid input data"},
@@ -72,7 +78,7 @@ def require_admin(user: User = Depends(get_current_active_user)) -> User:
 async def create_society(
     data: SocietyCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(get_current_active_user)
 ):
     return await SocietyService.create_society(db, data, user_id=current_user.id)
 
@@ -306,3 +312,110 @@ async def delete_banner(
 ):
     check_tenant_access(current_user, id, allow_resident=False)
     return await SocietyService.delete_branding_asset(db, id, is_logo=False, user_id=current_user.id)
+
+
+class JoinSocietyRequest(BaseModel):
+    join_code: str
+    flat_id: uuid.UUID
+
+
+@router.get(
+    "/join/verify",
+    response_model=SocietyJoinVerifyResponse,
+    summary="Verify a join code and get society details & structure",
+)
+async def verify_join_code(
+    code: str = Query(..., min_length=1),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.society import Society
+    from app.models.wing import Wing
+    from app.models.floor import Floor
+    from app.models.flat import Flat
+
+    # Fetch society by code with its wings, floors, and flats
+    query = (
+        select(Society)
+        .where(Society.join_code == code.upper().strip(), Society.deleted_at.is_(None))
+        .options(
+            selectinload(Society.wings).selectinload(Wing.floors).selectinload(Floor.flats)
+        )
+    )
+    result = await db.execute(query)
+    society = result.scalar_one_or_none()
+    if not society:
+        raise NotFoundError(detail="Society not found for the specified join code.", error_code="SOCIETY_NOT_FOUND")
+
+    # Construct the response manually to ensure structure hierarchy is populated correctly
+    wing_infos = []
+    for wing in society.wings:
+        if wing.deleted_at is not None:
+            continue
+        floor_infos = []
+        for floor in wing.floors:
+            if floor.deleted_at is not None:
+                continue
+            flat_infos = []
+            for flat in floor.flats:
+                if flat.deleted_at is not None:
+                    continue
+                flat_infos.append(FlatJoinInfo(
+                    id=flat.id,
+                    flat_number=flat.flat_number,
+                    flat_type=flat.flat_type
+                ))
+            floor_infos.append(FloorJoinInfo(
+                id=floor.id,
+                floor_number=floor.floor_number,
+                flats=flat_infos
+            ))
+        wing_infos.append(WingJoinInfo(
+            id=wing.id,
+            name=wing.name,
+            floors=floor_infos
+        ))
+
+    return SocietyJoinVerifyResponse(
+        id=society.id,
+        name=society.name,
+        address=society.address,
+        region=society.region,
+        city=society.city,
+        state=society.state,
+        wings=wing_infos
+    )
+
+
+@router.post(
+    "/join",
+    response_model=SuccessResponse,
+    summary="Submit a join request for a society",
+)
+async def join_society(
+    data: JoinSocietyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    from app.models.flat import Flat
+    # Verify join code
+    society = await SocietyService.get_society_by_join_code(db, data.join_code)
+    
+    # Verify flat belongs to this society
+    from sqlalchemy import select
+    flat_query = select(Flat).where(Flat.id == data.flat_id, Flat.society_id == society.id, Flat.deleted_at.is_(None))
+    flat_result = await db.execute(flat_query)
+    flat = flat_result.scalar_one_or_none()
+    if not flat:
+        raise ValidationError(detail="The selected flat is invalid or does not belong to the society.")
+
+    # Update user's residency association
+    current_user.society_id = society.id
+    current_user.flat_id = flat.id
+    current_user.approval_status = "PENDING"
+    db.add(current_user)
+    await db.commit()
+
+    return SuccessResponse(message="Join request submitted successfully. Pending owner approval.")

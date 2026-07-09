@@ -24,6 +24,7 @@ class Society(Base):
     
     logo_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     banner_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    join_code: Mapped[Optional[str]] = mapped_column(String(50), unique=True, nullable=True, index=True)
 
     # Soft Delete & Audit fields
     created_at: Mapped[datetime] = mapped_column(

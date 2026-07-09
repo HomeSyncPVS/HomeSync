@@ -69,7 +69,18 @@ class SocietyBase(BaseModel):
         return v
 
 
+class SocietyStructureCreate(BaseModel):
+    num_wings: int = Field(..., ge=1, description="Number of wings to generate")
+    wing_names: Optional[List[str]] = Field(None, description="Custom wing names (e.g. A, B, C)")
+    floors_per_wing: int = Field(..., ge=1, description="Number of floors per wing")
+    flats_per_floor: int = Field(..., ge=1, description="Number of flats per floor")
+    flat_type: str = Field("2BHK", description="Default flat type")
+    flat_size: float = Field(1000.0, ge=0.0, description="Default flat size in sqft")
+
+
 class SocietyCreate(SocietyBase):
+    structure: Optional[SocietyStructureCreate] = None
+
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -80,7 +91,15 @@ class SocietyCreate(SocietyBase):
                 "state": "Haryana",
                 "pincode": "122003",
                 "phone": "+919876543210",
-                "email": "admin@greenwoodheights.com"
+                "email": "admin@greenwoodheights.com",
+                "structure": {
+                    "num_wings": 3,
+                    "wing_names": ["A", "B", "C"],
+                    "floors_per_wing": 5,
+                    "flats_per_floor": 4,
+                    "flat_type": "2BHK",
+                    "flat_size": 1000.0
+                }
             }
         }
     )
@@ -117,9 +136,38 @@ class SocietyResponse(SocietyBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    join_code: Optional[str] = None
     logo_url: Optional[str] = None
     banner_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     created_by: Optional[uuid.UUID] = None
     updated_by: Optional[uuid.UUID] = None
+
+
+class FlatJoinInfo(BaseModel):
+    id: uuid.UUID
+    flat_number: str
+    flat_type: str
+
+
+class FloorJoinInfo(BaseModel):
+    id: uuid.UUID
+    floor_number: int
+    flats: List[FlatJoinInfo]
+
+
+class WingJoinInfo(BaseModel):
+    id: uuid.UUID
+    name: str
+    floors: List[FloorJoinInfo]
+
+
+class SocietyJoinVerifyResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    address: Optional[str] = None
+    region: str
+    city: str
+    state: str
+    wings: List[WingJoinInfo]

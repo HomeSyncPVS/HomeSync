@@ -136,6 +136,9 @@ class ResidentService:
             if flat:
                 flat.occupancy_status = "OCCUPIED_OWNER"
                 db.add(flat)
+        elif status_upper == "REJECTED":
+            user.society_id = None
+            user.flat_id = None
 
         await db.flush()
         return user
