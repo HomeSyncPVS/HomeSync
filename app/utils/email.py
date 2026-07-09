@@ -1,17 +1,13 @@
 import logging
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import httpx
 from app.core.config import settings
 
 logger = logging.getLogger("homesync.email")
 
 
-import httpx
-
-def send_email(to_email: str, subject: str, html_content: str) -> None:
+async def send_email(to_email: str, subject: str, html_content: str) -> None:
     """
-    Send an HTML email via Resend HTTP API.
+    Send an HTML email via Resend HTTP API (async).
     Falls back to dev mock log if RESEND_API_KEY is not set.
     """
     if not settings.RESEND_API_KEY:
@@ -34,12 +30,13 @@ def send_email(to_email: str, subject: str, html_content: str) -> None:
     }
 
     try:
-        response = httpx.post(
-            "https://api.resend.com/emails",
-            json=payload,
-            headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"}
-        )
-        response.raise_for_status()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                json=payload,
+                headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"}
+            )
+            response.raise_for_status()
         logger.info(f"Email sent to {to_email} successfully via Resend API.")
     except Exception as e:
         logger.error(f"Error sending email to {to_email}: {str(e)}", exc_info=True)
@@ -47,7 +44,7 @@ def send_email(to_email: str, subject: str, html_content: str) -> None:
         raise HTTPException(status_code=500, detail=f"Email API Error: {str(e)}")
 
 
-def send_password_reset_email(email: str, token: str) -> None:
+async def send_password_reset_email(email: str, token: str) -> None:
     subject = "Reset your HomeSync Password"
     link = f"{settings.BACKEND_URL}/api/v1/auth/reset-password?token={token}"
     html_content = f"""
@@ -62,10 +59,10 @@ def send_password_reset_email(email: str, token: str) -> None:
         <p style="color: #999; font-size: 12px; margin-top: 30px;">If you did not request this, you can safely ignore this email.</p>
     </div>
     """
-    send_email(email, subject, html_content)
+    await send_email(email, subject, html_content)
 
 
-def send_otp_email(email: str, otp: str, purpose: str) -> None:
+async def send_otp_email(email: str, otp: str, purpose: str) -> None:
     if purpose == "register" or purpose == "verify":
         subject = "Verify Your Email"
         html_content = f"""
@@ -85,4 +82,4 @@ def send_otp_email(email: str, otp: str, purpose: str) -> None:
             <p style="color: #666;">This code expires in <strong>10 minutes</strong>. Please do not share this code with anyone.</p>
         </div>
         """
-    send_email(email, subject, html_content)
+    await send_email(email, subject, html_content)

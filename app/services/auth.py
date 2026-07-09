@@ -322,7 +322,7 @@ class AuthService:
         db.add(reset_obj)
         await db.flush()
 
-        send_password_reset_email(user.email, token)
+        await send_password_reset_email(user.email, token)
 
     @staticmethod
     async def reset_password(db: AsyncSession, token: str, new_password: str) -> None:

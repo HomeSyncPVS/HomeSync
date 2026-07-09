@@ -53,7 +53,7 @@ class OTPService:
 
         # Send via email or SMS
         if "@" in target:
-            send_otp_email(target, code, purpose)
+            await send_otp_email(target, code, purpose)
         else:
             send_otp_sms(target, code, purpose)
 
