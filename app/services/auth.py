@@ -22,7 +22,6 @@ from app.models.user import User
 from app.models.session import Session
 from app.models.device import Device
 from app.models.password_reset import PasswordReset
-from app.models.email_verification import EmailVerification
 from app.repositories.user import UserRepository
 from app.repositories.role import RoleRepository
 from app.repositories.session import SessionRepository
@@ -42,7 +41,7 @@ from app.exceptions.custom import (
     ValidationError,
 )
 from app.utils.security import generate_random_token
-from app.utils.email import send_verification_email, send_password_reset_email
+from app.utils.email import send_password_reset_email
 
 user_repo = UserRepository()
 role_repo = RoleRepository()
@@ -358,51 +357,4 @@ class AuthService:
         await session_repo.revoke_all_user_sessions(db, user.id)
         await db.flush()
 
-    @staticmethod
-    async def send_email_verification(db: AsyncSession, user: User) -> None:
-        """
-        Generate email verification token and send it.
-        """
-        if user.is_verified:
-            raise ValidationError(detail="Email address is already verified.", error_code="EMAIL_ALREADY_VERIFIED")
 
-        token = generate_random_token()
-        token_hash = hash_token(token)
-        expires_at = datetime.now(timezone.utc) + timedelta(days=1)
-
-        verification_obj = EmailVerification(
-            user_id=user.id,
-            token_hash=token_hash,
-            expires_at=expires_at,
-            is_used=False
-        )
-        db.add(verification_obj)
-        await db.flush()
-
-        send_verification_email(user.email, token)
-
-    @staticmethod
-    async def verify_email(db: AsyncSession, token: str) -> None:
-        """
-        Verify email using token.
-        """
-        token_hash = hash_token(token)
-        from sqlalchemy import select
-        query = select(EmailVerification).where(
-            EmailVerification.token_hash == token_hash,
-            EmailVerification.is_used == False,
-            EmailVerification.expires_at > datetime.now(timezone.utc)
-        )
-        result = await db.execute(query)
-        verification_record = result.scalar_one_or_none()
-
-        if not verification_record:
-            raise ValidationError(detail="Email verification token is invalid or expired.", error_code="INVALID_VERIFICATION_TOKEN")
-
-        user = verification_record.user
-        user.is_verified = True
-        db.add(user)
-
-        verification_record.is_used = True
-        db.add(verification_record)
-        await db.flush()
