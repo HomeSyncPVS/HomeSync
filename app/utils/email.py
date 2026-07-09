@@ -36,7 +36,15 @@ async def send_email(to_email: str, subject: str, html_content: str) -> None:
                 json=payload,
                 headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"}
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                err_msg = response.text
+                try:
+                    err_json = response.json()
+                    if "message" in err_json:
+                        err_msg = err_json["message"]
+                except Exception:
+                    pass
+                raise Exception(f"Resend error ({response.status_code}): {err_msg}")
         logger.info(f"Email sent to {to_email} successfully via Resend API.")
     except Exception as e:
         logger.error(f"Error sending email to {to_email}: {str(e)}", exc_info=True)
