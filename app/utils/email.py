@@ -46,7 +46,8 @@ def send_email(to_email: str, subject: str, html_content: str) -> None:
         logger.info(f"Email sent to {to_email} successfully via SMTP.")
     except Exception as e:
         logger.error(f"Error sending email to {to_email}: {str(e)}", exc_info=True)
-        raise
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"SMTP Error: {str(e)}")
 
 
 def send_password_reset_email(email: str, token: str) -> None:
