@@ -1,6 +1,7 @@
 import logging
 import smtplib
 import asyncio
+import httpx
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
@@ -76,24 +77,61 @@ def _send_smtp_sync(to_email: str, subject: str, html_content: str) -> None:
 
 async def send_email(to_email: str, subject: str, html_content: str) -> None:
     """
-    Send an HTML email via SMTP only.
+    Send an HTML email.
+    If RESEND_API_KEY is configured, sends via Resend HTTP API (avoids blocked cloud SMTP ports).
+    Otherwise, falls back to SMTP if SMTP_HOST is set, or dev log mock.
     """
-    if not settings.SMTP_HOST:
-        logger.warning(
-            f"\n--- [DEVELOPMENT EMAIL MOCK] ---\n"
-            f"To: {to_email}\n"
-            f"Subject: {subject}\n"
-            f"Body:\n{html_content}\n"
-            f"---------------------------------\n"
-        )
-        return
+    # 1. Try Resend HTTP API (strongly recommended for cloud hosting platforms like Railway/Render)
+    if settings.RESEND_API_KEY:
+        from_address = "HomeSync <onboarding@resend.dev>"
+        payload = {
+            "from": from_address,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_content
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    "https://api.resend.com/emails",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"}
+                )
+                if response.status_code >= 400:
+                    err_msg = response.text
+                    try:
+                        err_json = response.json()
+                        if "message" in err_json:
+                            err_msg = err_json["message"]
+                    except Exception:
+                        pass
+                    raise Exception(f"Resend error ({response.status_code}): {err_msg}")
+            logger.info(f"Email sent to {to_email} successfully via Resend API.")
+            return
+        except Exception as e:
+            logger.error(f"Error sending email to {to_email} via Resend: {str(e)}", exc_info=True)
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail=f"Email API Error: {str(e)}")
 
-    try:
-        await asyncio.to_thread(_send_smtp_sync, to_email, subject, html_content)
-    except Exception as e:
-        logger.error(f"Error sending email to {to_email} via SMTP: {str(e)}", exc_info=True)
-        from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail=f"Email SMTP Error: {str(e)}")
+    # 2. Try SMTP fallback
+    if settings.SMTP_HOST:
+        try:
+            await asyncio.to_thread(_send_smtp_sync, to_email, subject, html_content)
+            logger.info(f"Email sent to {to_email} successfully via SMTP.")
+            return
+        except Exception as e:
+            logger.error(f"Error sending email to {to_email} via SMTP: {str(e)}", exc_info=True)
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail=f"Email SMTP Error: {str(e)}")
+
+    # 3. Development mock log fallback
+    logger.warning(
+        f"\n--- [DEVELOPMENT EMAIL MOCK] ---\n"
+        f"To: {to_email}\n"
+        f"Subject: {subject}\n"
+        f"Body:\n{html_content}\n"
+        f"---------------------------------\n"
+    )
 
 
 async def send_password_reset_email(email: str, token: str) -> None:

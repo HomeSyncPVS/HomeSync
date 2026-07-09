@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     EMAILS_FROM_NAME: Optional[str] = None
     SMTP_FROM_EMAIL: Optional[EmailStr] = None
     SMTP_FROM_NAME: Optional[str] = None
+    RESEND_API_KEY: Optional[str] = None
 
     BACKEND_URL: str = "https://homesync-production-9aa7.up.railway.app"
     ENVIRONMENT: str = "development"
