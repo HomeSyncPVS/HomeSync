@@ -77,19 +77,8 @@ role_repo = RoleRepository()
 async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     user = await AuthService.register_user(db, data)
     
-    # Automatically send verification email
-    import logging
-    _email_logger = logging.getLogger("homesync.email")
-    try:
-        await AuthService.send_email_verification(db, user)
-        _email_logger.info(f"Verification email sent to {user.email}")
-    except Exception as e:
-        # Don't fail the registration if sending email fails, but log the error
-        _email_logger.error(f"Failed to send verification email to {user.email}: {str(e)}", exc_info=True)
-        
-
     return RegisterResponse(
-        message="Registration successful. Verification email has been sent.",
+        message="Registration successful.",
         user=UserResponse.model_validate(user)
     )
 
@@ -147,6 +136,14 @@ async def send_otp(data: SendOtpRequest, db: AsyncSession = Depends(get_db)):
 )
 async def verify_otp(data: VerifyOtpRequest, db: AsyncSession = Depends(get_db)):
     await OTPService.verify_otp(db, data.target, data.code, data.purpose.value)
+    
+    if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
+        user = await user_repo.get_by_email(db, data.target)
+        if user and not user.is_verified:
+            user.is_verified = True
+            db.add(user)
+            await db.flush()
+            
     return SuccessResponse(message="OTP verified successfully.")
 
 
@@ -162,50 +159,10 @@ async def resend_otp(data: SendOtpRequest, db: AsyncSession = Depends(get_db)):
     return SuccessResponse(message="OTP resent successfully.")
 
 
-# ==========================================
-# EMAIL VERIFICATION
-# ==========================================
-
-@router.post(
-    "/send-email-verification",
-    response_model=SuccessResponse,
-    summary="Request Verification Email",
-    description="Trigger verification process by sending a signed email verification link to authenticated user.",
-)
-async def send_email_verification(
-    current_user=Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    await AuthService.send_email_verification(db, current_user)
-    return SuccessResponse(message="Verification email sent.")
 
 
-@router.post(
-    "/verify-email",
-    response_model=SuccessResponse,
-    summary="Verify Email Address",
-    description="Completes email verification using a valid verification token.",
-)
-async def verify_email(
-    token: str = Query(..., description="Email verification token"),
-    db: AsyncSession = Depends(get_db)
-):
-    await AuthService.verify_email(db, token)
-    return SuccessResponse(message="Email address verified successfully.")
 
 
-@router.get(
-    "/verify-email",
-    response_model=SuccessResponse,
-    summary="Verify Email Address (GET)",
-    description="Completes email verification using a valid verification token from GET link.",
-)
-async def verify_email_get(
-    token: str = Query(..., description="Email verification token"),
-    db: AsyncSession = Depends(get_db)
-):
-    await AuthService.verify_email(db, token)
-    return SuccessResponse(message="Email address verified successfully.")
 
 
 # ==========================================

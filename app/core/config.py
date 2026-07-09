@@ -73,7 +73,6 @@ class Settings(BaseSettings):
     EMAILS_FROM_NAME: Optional[str] = None
 
     BACKEND_URL: str = "https://homesync-ccds.onrender.com"
-    RESEND_API_KEY: Optional[str] = None
     ENVIRONMENT: str = "development"
 
     @field_validator("SECRET_KEY")
