@@ -310,10 +310,6 @@ function AppContent() {
     setAppState('otp');
   };
 
-  const handleForgotPasswordSuccess = () => {
-    setResetToken('');
-    setAppState('reset_password');
-  };
 
   const handlePayNow = async (billId: string) => {
     try {
