@@ -53,7 +53,7 @@ import RolesPermissionsScreen from './screens/superadmin/RolesPermissionsScreen'
 import NotificationTogglesScreen from './screens/superadmin/NotificationTogglesScreen';
 import AuditLogsScreen from './screens/superadmin/AuditLogsScreen';
 
-import { getAccessToken, getUserRole, saveTokens, deleteTokens } from './utils/storage';
+import { getAccessToken, getUserRole, saveTokens, saveUserRole, deleteTokens } from './utils/storage';
 import { registerLogoutHandler, API_BASE_URL, apiClient } from './utils/api';
 
 const styles = StyleSheet.create({
@@ -223,7 +223,9 @@ function AppContent() {
       setLoadingProfile(true);
       const res = await apiClient.get('/residents/me/profile');
       setUserProfile(res.data);
-      setUserRole(res.data.role?.name);
+      if (res.data.role?.name) {
+        setUserRole(res.data.role.name);
+      }
     } catch (err) {
       console.error('Failed to fetch user profile', err);
     } finally {
@@ -696,6 +698,7 @@ function AppContent() {
                 // Auto login on successful register
                 if (access_token && refresh_token && role) {
                   await saveTokens(access_token, refresh_token);
+                  await saveUserRole(role);
                   setUserRole(role);
                   setAppState('dashboard');
                   setCurrentTab('home');
