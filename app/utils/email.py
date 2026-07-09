@@ -1,16 +1,56 @@
 import logging
-import httpx
+import smtplib
+import asyncio
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
 
 logger = logging.getLogger("homesync.email")
 
 
+def _send_smtp_sync(to_email: str, subject: str, html_content: str) -> None:
+    """
+    Synchronous SMTP helper to be run in a separate thread.
+    """
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    
+    from_name = settings.EMAILS_FROM_NAME or "HomeSync"
+    from_email = settings.EMAILS_FROM_EMAIL or settings.SMTP_USER or "noreply@homesync.com"
+    msg["From"] = f"{from_name} <{from_email}>"
+    msg["To"] = to_email
+
+    part = MIMEText(html_content, "html")
+    msg.attach(part)
+
+    smtp_host = settings.SMTP_HOST
+    smtp_port = settings.SMTP_PORT or 587
+
+    if smtp_port == 465:
+        server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10.0)
+    else:
+        server = smtplib.SMTP(smtp_host, smtp_port, timeout=10.0)
+        
+    try:
+        if smtp_port != 465:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            
+        if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            
+        server.sendmail(from_email, [to_email], msg.as_string())
+    finally:
+        server.quit()
+
+
 async def send_email(to_email: str, subject: str, html_content: str) -> None:
     """
-    Send an HTML email via Resend HTTP API (async).
-    Falls back to dev mock log if RESEND_API_KEY is not set.
+    Send an HTML email via SMTP.
+    Falls back to dev mock log if SMTP_HOST is not set.
     """
-    if not settings.RESEND_API_KEY:
+    if not settings.SMTP_HOST:
         logger.warning(
             f"\n--- [DEVELOPMENT EMAIL MOCK] ---\n"
             f"To: {to_email}\n"
@@ -20,36 +60,13 @@ async def send_email(to_email: str, subject: str, html_content: str) -> None:
         )
         return
 
-    from_address = "HomeSync <onboarding@resend.dev>"
-
-    payload = {
-        "from": from_address,
-        "to": [to_email],
-        "subject": subject,
-        "html": html_content
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                "https://api.resend.com/emails",
-                json=payload,
-                headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"}
-            )
-            if response.status_code >= 400:
-                err_msg = response.text
-                try:
-                    err_json = response.json()
-                    if "message" in err_json:
-                        err_msg = err_json["message"]
-                except Exception:
-                    pass
-                raise Exception(f"Resend error ({response.status_code}): {err_msg}")
-        logger.info(f"Email sent to {to_email} successfully via Resend API.")
+        await asyncio.to_thread(_send_smtp_sync, to_email, subject, html_content)
+        logger.info(f"Email sent to {to_email} successfully via SMTP.")
     except Exception as e:
         logger.error(f"Error sending email to {to_email}: {str(e)}", exc_info=True)
         from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail=f"Email API Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Email SMTP Error: {str(e)}")
 
 
 async def send_password_reset_email(email: str, token: str) -> None:
