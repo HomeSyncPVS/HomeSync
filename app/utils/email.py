@@ -7,12 +7,14 @@ from app.core.config import settings
 logger = logging.getLogger("homesync.email")
 
 
+import httpx
+
 def send_email(to_email: str, subject: str, html_content: str) -> None:
     """
-    Send an HTML email via SMTP (Gmail).
-    Falls back to dev mock log if SMTP_HOST is not set.
+    Send an HTML email via Resend HTTP API.
+    Falls back to dev mock log if RESEND_API_KEY is not set.
     """
-    if not settings.SMTP_HOST:
+    if not settings.RESEND_API_KEY:
         logger.warning(
             f"\n--- [DEVELOPMENT EMAIL MOCK] ---\n"
             f"To: {to_email}\n"
@@ -22,32 +24,27 @@ def send_email(to_email: str, subject: str, html_content: str) -> None:
         )
         return
 
-    from_address = (
-        f"{settings.EMAILS_FROM_NAME} <{settings.EMAILS_FROM_EMAIL}>"
-        if settings.EMAILS_FROM_NAME and settings.EMAILS_FROM_EMAIL
-        else "HomeSync <noreply@homesync.com>"
-    )
+    from_address = "HomeSync <onboarding@resend.dev>"
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = from_address
-    msg["To"] = to_email
-
-    part = MIMEText(html_content, "html")
-    msg.attach(part)
+    payload = {
+        "from": from_address,
+        "to": [to_email],
+        "subject": subject,
+        "html": html_content
+    }
 
     try:
-        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT or 587)
-        server.starttls()
-        if settings.SMTP_USER and settings.SMTP_PASSWORD:
-            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        server.sendmail(from_address, [to_email], msg.as_string())
-        server.quit()
-        logger.info(f"Email sent to {to_email} successfully via SMTP.")
+        response = httpx.post(
+            "https://api.resend.com/emails",
+            json=payload,
+            headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"}
+        )
+        response.raise_for_status()
+        logger.info(f"Email sent to {to_email} successfully via Resend API.")
     except Exception as e:
         logger.error(f"Error sending email to {to_email}: {str(e)}", exc_info=True)
         from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail=f"SMTP Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Email API Error: {str(e)}")
 
 
 def send_password_reset_email(email: str, token: str) -> None:
