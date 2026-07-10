@@ -11,6 +11,7 @@ from app.models.vehicle import Vehicle
 from app.models.emergency_contact import EmergencyContact
 from app.models.notification import Notification
 from app.models.flat import Flat
+from app.models.floor import Floor
 from app.models.society import Society
 from app.models.bill import MaintenanceBill
 from app.models.complaint import Complaint
@@ -54,7 +55,7 @@ class ResidentService:
             .options(
                 selectinload(User.family_members),
                 selectinload(User.vehicles),
-                joinedload(User.flat).joinedload("floor").joinedload("wing"),
+                joinedload(User.flat).joinedload(Flat.floor).joinedload(Floor.wing),
             )
         )
         result = await db.execute(query)

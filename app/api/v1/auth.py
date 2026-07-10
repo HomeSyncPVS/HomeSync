@@ -140,54 +140,76 @@ async def verify_otp(
     data: VerifyOtpRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    await OTPService.verify_otp(db, data.target, data.code, data.purpose.value)
-    
+    from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
+
     token = None
     access_token = None
     refresh_token = None
     session_id = None
     user_response = None
-    
-    if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
-        user = await user_repo.get_by_email(db, data.target)
-        if user:
-            if not user.is_verified:
+
+    if is_supabase_mock():
+        await OTPService.verify_otp(db, data.target, data.code, data.purpose.value)
+        
+        if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
+            user = await user_repo.get_by_email(db, data.target)
+            if user:
+                if not user.is_verified:
+                    user.is_verified = True
+                    db.add(user)
+                    await db.flush()
+                
+                ip_address = request.client.host if request.client else None
+                user_agent = request.headers.get("user-agent")
+                session_data = await AuthService.create_session_for_user(db, user, ip_address, user_agent)
+                
+                access_token = session_data["access_token"]
+                refresh_token = session_data["refresh_token"]
+                session_id = session_data["session_id"]
+                user_response = UserResponse.model_validate(session_data["user"])
+
+        elif data.purpose.value == OtpPurpose.RESET.value:
+            user = await user_repo.get_by_email(db, data.target)
+            if user:
+                from app.utils.security import generate_random_token
+                from app.core.security import hash_token
+                from app.models.password_reset import PasswordReset
+                from datetime import datetime, timedelta, timezone
+                
+                token = generate_random_token()
+                token_hash = hash_token(token)
+                expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                
+                reset_obj = PasswordReset(
+                    user_id=user.id,
+                    token_hash=token_hash,
+                    expires_at=expires_at,
+                    is_used=False
+                )
+                db.add(reset_obj)
+                await db.flush()
+    else:
+        # Verify via Supabase Auth
+        sb_type = "signup"
+        if data.purpose.value == OtpPurpose.RESET.value:
+            sb_type = "recovery"
+
+        result = await SupabaseAuthClient.verify_otp(email=data.target, token=data.code, type=sb_type)
+        
+        if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
+            access_token = result.get("access_token")
+            refresh_token = result.get("refresh_token")
+            session_id = uuid.uuid4()
+            
+            user = await user_repo.get_by_email(db, data.target)
+            if user:
                 user.is_verified = True
                 db.add(user)
                 await db.flush()
-            
-            # Automatically create a session for the user (auto-login)
-            ip_address = request.client.host if request.client else None
-            user_agent = request.headers.get("user-agent")
-            session_data = await AuthService.create_session_for_user(db, user, ip_address, user_agent)
-            
-            access_token = session_data["access_token"]
-            refresh_token = session_data["refresh_token"]
-            session_id = session_data["session_id"]
-            user_response = UserResponse.model_validate(session_data["user"])
+                user_response = UserResponse.model_validate(user)
+        elif data.purpose.value == OtpPurpose.RESET.value:
+            token = result.get("access_token")
 
-    elif data.purpose.value == OtpPurpose.RESET.value:
-        user = await user_repo.get_by_email(db, data.target)
-        if user:
-            # Generate random token
-            from app.utils.security import generate_random_token
-            from app.core.security import hash_token
-            from app.models.password_reset import PasswordReset
-            from datetime import datetime, timedelta, timezone
-            
-            token = generate_random_token()
-            token_hash = hash_token(token)
-            expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
-            
-            reset_obj = PasswordReset(
-                user_id=user.id,
-                token_hash=token_hash,
-                expires_at=expires_at,
-                is_used=False
-            )
-            db.add(reset_obj)
-            await db.flush()
-            
     await db.commit()
     return VerifyOtpResponse(
         success=True,
@@ -252,11 +274,16 @@ async def reset_password(data: ResetPasswordRequest, db: AsyncSession = Depends(
     description="Changes password for current user. Revokes all other active sessions.",
 )
 async def change_password(
+    request: Request,
     data: ChangePasswordRequest,
     current_user=Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    await AuthService.change_password(db, current_user, data)
+    token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header[7:]
+    await AuthService.change_password(db, current_user, data, token=token)
     return SuccessResponse(message="Password changed successfully. All other devices have been logged out.")
 
 
@@ -299,8 +326,16 @@ async def refresh_token(
     summary="Log Out Current Session",
     description="Revokes current refresh token and deactivates session.",
 )
-async def logout(data: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
-    await AuthService.logout_session(db, data.refresh_token)
+async def logout(
+    request: Request,
+    data: RefreshTokenRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header[7:]
+    await AuthService.logout_session(db, data.refresh_token, token=token)
     return SuccessResponse(message="Logged out successfully.")
 
 
@@ -311,10 +346,15 @@ async def logout(data: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
     description="Revokes all sessions across all devices for the current user.",
 )
 async def logout_all(
+    request: Request,
     current_user=Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    await AuthService.logout_all_sessions(db, current_user.id)
+    token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header[7:]
+    await AuthService.logout_all_sessions(db, current_user.id, token=token)
     return SuccessResponse(message="Successfully logged out of all active sessions.")
 
 

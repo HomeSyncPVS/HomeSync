@@ -20,27 +20,20 @@ user_repo = UserRepository()
 session_repo = SessionRepository()
 
 
+from app.utils.supabase_auth import SupabaseAuthClient
+
+
 async def get_current_user(
     db: AsyncSession = Depends(get_db), token: str = Depends(reusable_oauth2)
 ) -> User:
     """
-    Decodes the JWT access token and returns the authenticated User.
-    Verifies that the session linked to this access token is active.
+    Decodes the JWT access token using Supabase and returns the authenticated User.
     """
-    payload = verify_token(token)
-    if not payload or payload.get("token_type") != "access":
+    supabase_user = await SupabaseAuthClient.verify_access_token(token)
+    user_id = supabase_user.get("id")
+
+    if not user_id:
         raise AuthenticationError(detail="Invalid or expired access token.", error_code="INVALID_ACCESS_TOKEN")
-
-    user_id = payload.get("sub")
-    session_id = payload.get("session_id")
-
-    if not user_id or not session_id:
-        raise AuthenticationError(detail="Invalid token format.", error_code="INVALID_TOKEN_FORMAT")
-
-    # Verify session is still active (Blacklisted token and session revocation validation)
-    session = await session_repo.get(db, uuid.UUID(session_id))
-    if not session or not session.is_active:
-        raise AuthenticationError(detail="Session has been revoked or expired.", error_code="SESSION_REVOKED")
 
     user = await user_repo.get(db, uuid.UUID(user_id))
     if not user:
@@ -48,6 +41,12 @@ async def get_current_user(
 
     if not user.is_active:
         raise ForbiddenError(detail="User account is deactivated.")
+
+    # Dynamically sync is_verified status if confirmed in Supabase
+    if supabase_user.get("is_verified") and not user.is_verified:
+        user.is_verified = True
+        db.add(user)
+        await db.flush()
 
     return user
 

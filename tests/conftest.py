@@ -152,7 +152,6 @@ from app.models.user import User
 from app.models.otp import OtpCode
 from app.models.session import Session
 from app.models.device import Device
-from app.models.email_verification import EmailVerification
 from app.models.password_reset import PasswordReset
 from app.models.flat import Flat
 from app.models.floor import Floor
@@ -184,7 +183,6 @@ async def clean_test_db(db: AsyncSession):
     await db.execute(delete(SocietySettings))
     await db.execute(delete(Session))
     await db.execute(delete(Device))
-    await db.execute(delete(EmailVerification))
     await db.execute(delete(PasswordReset))
     await db.execute(delete(OtpCode))
     await db.execute(delete(Society))
