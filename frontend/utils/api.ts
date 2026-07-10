@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getAccessToken, getRefreshToken, saveTokens, deleteTokens } from './storage';
 
-export const API_BASE_URL = 'https://homesync-production-9aa7.up.railway.app/api/v1';
+export const API_BASE_URL = 'https://homesync-production-8952.up.railway.app/api/v1';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

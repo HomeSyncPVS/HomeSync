@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: Optional[EmailStr] = None
     SMTP_FROM_NAME: Optional[str] = None
 
-    BACKEND_URL: str = "https://homesync-production-9aa7.up.railway.app"
+    BACKEND_URL: str = "https://homesync-production-8952.up.railway.app"
     ENVIRONMENT: str = "development"
 
     @field_validator("SECRET_KEY")
