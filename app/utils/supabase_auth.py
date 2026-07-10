@@ -241,6 +241,54 @@ class SupabaseAuthClient:
                 SupabaseAuthClient._handle_error(response)
 
     @staticmethod
+    async def resend_email(email: str, type: str = "signup") -> None:
+        """
+        Resends verification email or OTP via Supabase.
+        """
+        if is_supabase_mock():
+            logger.info(f"[MOCK AUTH] Resent {type} email to: {email}")
+            return
+
+        url = f"{settings.SUPABASE_URL}/auth/v1/resend"
+        headers = {
+            "apikey": settings.SUPABASE_SERVICE_ROLE_KEY,
+            "Content-Type": "application/json",
+        }
+        body = {
+            "email": email,
+            "type": type,
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=body, headers=headers)
+            if response.status_code not in (200, 204):
+                SupabaseAuthClient._handle_error(response)
+
+    @staticmethod
+    async def send_login_otp(email: str) -> None:
+        """
+        Sends a login OTP or magic link via Supabase.
+        """
+        if is_supabase_mock():
+            logger.info(f"[MOCK AUTH] Sent login OTP to: {email}")
+            return
+
+        url = f"{settings.SUPABASE_URL}/auth/v1/otp"
+        headers = {
+            "apikey": settings.SUPABASE_SERVICE_ROLE_KEY,
+            "Content-Type": "application/json",
+        }
+        body = {
+            "email": email,
+            "create_user": False
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=body, headers=headers)
+            if response.status_code not in (200, 204):
+                SupabaseAuthClient._handle_error(response)
+
+    @staticmethod
     async def verify_otp(email: str, token: str, type: str) -> Dict[str, Any]:
         """
         Verifies signup or recovery OTP using Supabase verify.

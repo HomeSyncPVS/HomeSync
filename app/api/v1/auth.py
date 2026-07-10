@@ -124,7 +124,19 @@ async def login(
     dependencies=[Depends(RateLimiter(times=3, seconds=60))],
 )
 async def send_otp(data: SendOtpRequest, db: AsyncSession = Depends(get_db)):
-    await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
+    from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
+    if is_supabase_mock():
+        await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
+    else:
+        if "@" in data.target:
+            if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
+                await SupabaseAuthClient.resend_email(email=data.target, type="signup")
+            elif data.purpose.value == OtpPurpose.RESET.value:
+                await SupabaseAuthClient.recover(email=data.target)
+            elif data.purpose.value == OtpPurpose.LOGIN.value:
+                await SupabaseAuthClient.send_login_otp(email=data.target)
+        else:
+            await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
     return SuccessResponse(message="OTP sent successfully.")
 
 
@@ -230,7 +242,19 @@ async def verify_otp(
     dependencies=[Depends(RateLimiter(times=3, seconds=60))],
 )
 async def resend_otp(data: SendOtpRequest, db: AsyncSession = Depends(get_db)):
-    await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
+    from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
+    if is_supabase_mock():
+        await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
+    else:
+        if "@" in data.target:
+            if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
+                await SupabaseAuthClient.resend_email(email=data.target, type="signup")
+            elif data.purpose.value == OtpPurpose.RESET.value:
+                await SupabaseAuthClient.recover(email=data.target)
+            elif data.purpose.value == OtpPurpose.LOGIN.value:
+                await SupabaseAuthClient.send_login_otp(email=data.target)
+        else:
+            await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
     return SuccessResponse(message="OTP resent successfully.")
 
 
