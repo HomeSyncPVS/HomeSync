@@ -73,8 +73,8 @@ class AuthService:
 
         from app.utils.supabase_auth import SupabaseAuthClient
 
-        # Sign up in Supabase
-        supabase_user = await SupabaseAuthClient.signup_user(email=data.email, password=data.password, phone=data.phone)
+        # Sign up in Supabase (only email or phone can be provided to Supabase signup at once, so we pass email and store the phone number in our local database)
+        supabase_user = await SupabaseAuthClient.signup_user(email=data.email, password=data.password, phone=None)
         supabase_uid = uuid.UUID(supabase_user["id"])
 
         new_user = User(
