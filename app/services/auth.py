@@ -74,7 +74,20 @@ class AuthService:
         from app.utils.supabase_auth import SupabaseAuthClient
 
         # Sign up in Supabase (only email or phone can be provided to Supabase signup at once, so we pass email and store the phone number in our local database)
-        supabase_user = await SupabaseAuthClient.signup_user(email=data.email, password=data.password, phone=None)
+        try:
+            supabase_user = await SupabaseAuthClient.signup_user(email=data.email, password=data.password, phone=None)
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "already registered" in err_msg or "already_registered" in err_msg:
+                # User already exists in Supabase but not in our local DB.
+                # Let's verify the user's password by attempting to log them in via Supabase.
+                try:
+                    supabase_user = await SupabaseAuthClient.login_user(data.email, data.password, db)
+                except Exception:
+                    # If login fails (wrong password or other authentication error), raise the standard conflict error
+                    raise ConflictError(detail="Email is already registered.", error_code="EMAIL_IN_USE")
+            else:
+                raise e
         
         # Extract user ID (handles both real nested 'user' key and mock flat dict)
         user_id_str = supabase_user.get("id") or supabase_user.get("user", {}).get("id")

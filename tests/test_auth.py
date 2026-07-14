@@ -149,3 +149,84 @@ async def test_profile_update(client: AsyncClient, db):
     assert update_response.status_code == 200
     assert update_response.json()["full_name"] == "New Name"
     assert update_response.json()["phone"] == "+9876543213"
+
+
+from unittest.mock import patch
+from app.exceptions.custom import ValidationError, AuthenticationError
+
+@pytest.mark.asyncio
+async def test_register_self_healing_success(client: AsyncClient, db):
+    """
+    Test that registration self-heals when a user exists in Supabase but not locally,
+    provided they supply the correct password.
+    """
+    email = "heal-success@homesync.com"
+    payload = {
+        "email": email,
+        "phone": "+1999888777",
+        "password": "CorrectPassword123!",
+        "full_name": "Healed User",
+    }
+
+    mock_user_id = "00000000-0000-0000-0000-000000000001"
+    mock_supabase_user = {
+        "access_token": "mock-token",
+        "refresh_token": "mock-refresh",
+        "user": {
+            "id": mock_user_id,
+            "email": email,
+            "email_confirmed_at": "2026-07-14T11:00:00Z"
+        }
+    }
+
+    with patch("app.utils.supabase_auth.SupabaseAuthClient.signup_user") as mock_signup, \
+         patch("app.utils.supabase_auth.SupabaseAuthClient.login_user") as mock_login:
+        
+        # 1. Signup raises "User already registered" error
+        mock_signup.side_effect = ValidationError("Supabase Authentication error: User already registered")
+        # 2. Login succeeds (simulating correct password)
+        mock_login.return_value = mock_supabase_user
+
+        response = await client.post("/api/v1/auth/register", json=payload)
+        
+        assert response.status_code == 201
+        data = response.json()
+        assert data["success"] is True
+        assert data["user"]["email"] == email
+
+        # Verify user now exists in local DB
+        query = select(User).where(User.email == email)
+        result = await db.execute(query)
+        user = result.scalar_one_or_none()
+        assert user is not None
+        assert str(user.id) == mock_user_id
+        assert user.is_verified is True
+
+
+@pytest.mark.asyncio
+async def test_register_self_healing_failure(client: AsyncClient, db):
+    """
+    Test that registration fails with Conflict (409) if a user exists in Supabase
+    but supplies an incorrect password.
+    """
+    email = "heal-fail@homesync.com"
+    payload = {
+        "email": email,
+        "phone": "+1999888776",
+        "password": "WrongPassword123!",
+        "full_name": "Failed Healed User",
+    }
+
+    with patch("app.utils.supabase_auth.SupabaseAuthClient.signup_user") as mock_signup, \
+         patch("app.utils.supabase_auth.SupabaseAuthClient.login_user") as mock_login:
+        
+        # 1. Signup raises "User already registered" error
+        mock_signup.side_effect = ValidationError("Supabase Authentication error: User already registered")
+        # 2. Login fails (simulating incorrect password)
+        mock_login.side_effect = AuthenticationError("Invalid email or password.")
+
+        response = await client.post("/api/v1/auth/register", json=payload)
+        
+        assert response.status_code == 409
+        assert response.json()["success"] is False
+
