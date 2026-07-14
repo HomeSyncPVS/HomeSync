@@ -300,10 +300,18 @@ function AppContent() {
     fetchUserProfile();
   };
 
-  const handleRegisterSuccess = (target: string) => {
-    setOtpTarget(target);
-    setOtpPurpose('register');
-    setAppState('otp');
+  const handleRegisterSuccess = (target: string, isVerified = false) => {
+    if (isVerified) {
+      Alert.alert(
+        'Registration Successful',
+        'Your account has been created successfully. Please sign in.',
+        [{ text: 'OK', onPress: () => setAppState('login') }]
+      );
+    } else {
+      setOtpTarget(target);
+      setOtpPurpose('register');
+      setAppState('otp');
+    }
   };
 
   const handleForgotPasswordSuccess = (email: string) => {

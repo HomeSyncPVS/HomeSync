@@ -82,6 +82,10 @@ class AuthService:
             raise ValidationError(detail="Failed to retrieve user ID from Supabase signup response.")
         supabase_uid = uuid.UUID(user_id_str)
 
+        # Detect if user was auto-confirmed on signup (e.g. if "Confirm email" is disabled in Supabase)
+        user_obj = supabase_user.get("user", {}) if "user" in supabase_user else supabase_user
+        is_verified = user_obj.get("email_confirmed_at") is not None
+
         new_user = User(
             id=supabase_uid,
             email=data.email,
@@ -91,7 +95,7 @@ class AuthService:
             role_id=role.id,
             society_id=data.society_id,
             is_active=True,
-            is_verified=False,
+            is_verified=is_verified,
         )
         user = await user_repo.create(db, obj_in=new_user)
         await db.flush()

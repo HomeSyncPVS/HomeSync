@@ -129,8 +129,19 @@ async def send_otp(data: SendOtpRequest, db: AsyncSession = Depends(get_db)):
         await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
     else:
         if "@" in data.target:
+            # If user is already verified in our database, skip resend and return success
+            user = await user_repo.get_by_email(db, data.target)
+            if user and user.is_verified:
+                return SuccessResponse(message="OTP sent successfully (User is already verified).")
+
             if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
-                await SupabaseAuthClient.resend_email(email=data.target, type="signup")
+                try:
+                    await SupabaseAuthClient.resend_email(email=data.target, type="signup")
+                except ValidationError as e:
+                    # If email is already confirmed/verified, ignore the error and return success
+                    if "confirmed" in str(e).lower() or "verified" in str(e).lower():
+                        return SuccessResponse(message="OTP sent successfully (User is already verified).")
+                    raise e
             elif data.purpose.value == OtpPurpose.RESET.value:
                 await SupabaseAuthClient.recover(email=data.target)
             elif data.purpose.value == OtpPurpose.LOGIN.value:
@@ -247,8 +258,19 @@ async def resend_otp(data: SendOtpRequest, db: AsyncSession = Depends(get_db)):
         await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
     else:
         if "@" in data.target:
+            # If user is already verified in our database, skip resend and return success
+            user = await user_repo.get_by_email(db, data.target)
+            if user and user.is_verified:
+                return SuccessResponse(message="OTP resent successfully (User is already verified).")
+
             if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
-                await SupabaseAuthClient.resend_email(email=data.target, type="signup")
+                try:
+                    await SupabaseAuthClient.resend_email(email=data.target, type="signup")
+                except ValidationError as e:
+                    # If email is already confirmed/verified, ignore the error and return success
+                    if "confirmed" in str(e).lower() or "verified" in str(e).lower():
+                        return SuccessResponse(message="OTP resent successfully (User is already verified).")
+                    raise e
             elif data.purpose.value == OtpPurpose.RESET.value:
                 await SupabaseAuthClient.recover(email=data.target)
             elif data.purpose.value == OtpPurpose.LOGIN.value:
