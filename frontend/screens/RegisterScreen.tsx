@@ -30,7 +30,7 @@ export default function RegisterScreen({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [secureText, setSecureText] = useState(true);
 
-  # Simple validation checks
+  // Simple validation checks
   const validateForm = () => {
     if (!name.trim()) {
       setErrorMessage('Please enter your full name');
@@ -77,7 +77,7 @@ export default function RegisterScreen({
         throw new Error(data.detail || 'Registration failed. Try again.');
       }
 
-      # Success: Route to OTP Verification Screen, passing email/phone target and verification state
+      // Success: Route to OTP Verification Screen, passing email/phone target and verification state
       onRegisterSuccess(email.trim(), data.user?.is_verified);
     } catch (err: any) {
       setErrorMessage(err.message || 'An error occurred. Please try again.');
