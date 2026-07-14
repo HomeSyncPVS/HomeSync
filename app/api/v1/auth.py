@@ -124,30 +124,15 @@ async def login(
     dependencies=[Depends(RateLimiter(times=3, seconds=60))],
 )
 async def send_otp(data: SendOtpRequest, db: AsyncSession = Depends(get_db)):
-    from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
-    if is_supabase_mock():
-        await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
-    else:
-        if "@" in data.target:
-            # If user is already verified in our database, skip resend and return success
-            user = await user_repo.get_by_email(db, data.target)
-            if user and user.is_verified:
-                return SuccessResponse(message="OTP sent successfully (User is already verified).")
+    from app.utils.supabase_auth import is_supabase_mock
+    if not is_supabase_mock() and "@" in data.target:
+        # If user is already verified in our database and they are trying to register/verify, skip and return success
+        user = await user_repo.get_by_email(db, data.target)
+        if user and user.is_verified and data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
+            return SuccessResponse(message="OTP sent successfully (User is already verified).")
 
-            if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
-                try:
-                    await SupabaseAuthClient.resend_email(email=data.target, type="signup")
-                except ValidationError as e:
-                    # If email is already confirmed/verified, ignore the error and return success
-                    if "confirmed" in str(e).lower() or "verified" in str(e).lower():
-                        return SuccessResponse(message="OTP sent successfully (User is already verified).")
-                    raise e
-            elif data.purpose.value == OtpPurpose.RESET.value:
-                await SupabaseAuthClient.recover(email=data.target)
-            elif data.purpose.value == OtpPurpose.LOGIN.value:
-                await SupabaseAuthClient.send_login_otp(email=data.target)
-        else:
-            await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
+    # Generate and send locally using custom Brevo SMTP
+    await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
     return SuccessResponse(message="OTP sent successfully.")
 
 
@@ -171,67 +156,51 @@ async def verify_otp(
     session_id = None
     user_response = None
 
-    if is_supabase_mock():
-        await OTPService.verify_otp(db, data.target, data.code, data.purpose.value)
-        
-        if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
-            user = await user_repo.get_by_email(db, data.target)
-            if user:
-                if not user.is_verified:
-                    user.is_verified = True
-                    db.add(user)
-                    await db.flush()
-                
+    # Verify the OTP locally first for both mock and real modes
+    await OTPService.verify_otp(db, data.target, data.code, data.purpose.value)
+
+    if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
+        user = await user_repo.get_by_email(db, data.target)
+        if user:
+            if not user.is_verified:
+                user.is_verified = True
+                db.add(user)
+                await db.flush()
+
+            # If mock, generate local mock tokens
+            if is_supabase_mock():
                 ip_address = request.client.host if request.client else None
                 user_agent = request.headers.get("user-agent")
                 session_data = await AuthService.create_session_for_user(db, user, ip_address, user_agent)
-                
                 access_token = session_data["access_token"]
                 refresh_token = session_data["refresh_token"]
                 session_id = session_data["session_id"]
                 user_response = UserResponse.model_validate(session_data["user"])
-
-        elif data.purpose.value == OtpPurpose.RESET.value:
-            user = await user_repo.get_by_email(db, data.target)
-            if user:
-                from app.utils.security import generate_random_token
-                from app.core.security import hash_token
-                from app.models.password_reset import PasswordReset
-                from datetime import datetime, timedelta, timezone
-                
-                token = generate_random_token()
-                token_hash = hash_token(token)
-                expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
-                
-                reset_obj = PasswordReset(
-                    user_id=user.id,
-                    token_hash=token_hash,
-                    expires_at=expires_at,
-                    is_used=False
-                )
-                db.add(reset_obj)
-                await db.flush()
-    else:
-        # Verify via Supabase Auth
-        sb_type = "signup"
-        if data.purpose.value == OtpPurpose.RESET.value:
-            sb_type = "recovery"
-
-        result = await SupabaseAuthClient.verify_otp(email=data.target, token=data.code, type=sb_type)
-        
-        if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
-            access_token = result.get("access_token")
-            refresh_token = result.get("refresh_token")
-            session_id = uuid.uuid4()
-            
-            user = await user_repo.get_by_email(db, data.target)
-            if user:
-                user.is_verified = True
-                db.add(user)
-                await db.flush()
+            else:
+                # If real Supabase, confirm user in Supabase via GoTrue Admin API
+                await SupabaseAuthClient.admin_confirm_user(str(user.id))
                 user_response = UserResponse.model_validate(user)
-        elif data.purpose.value == OtpPurpose.RESET.value:
-            token = result.get("access_token")
+
+    elif data.purpose.value == OtpPurpose.RESET.value:
+        user = await user_repo.get_by_email(db, data.target)
+        if user:
+            from app.utils.security import generate_random_token
+            from app.core.security import hash_token
+            from app.models.password_reset import PasswordReset
+            from datetime import datetime, timedelta, timezone
+            
+            token = generate_random_token()
+            token_hash = hash_token(token)
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            
+            reset_obj = PasswordReset(
+                user_id=user.id,
+                token_hash=token_hash,
+                expires_at=expires_at,
+                is_used=False
+            )
+            db.add(reset_obj)
+            await db.flush()
 
     await db.commit()
     return VerifyOtpResponse(
@@ -253,30 +222,15 @@ async def verify_otp(
     dependencies=[Depends(RateLimiter(times=3, seconds=60))],
 )
 async def resend_otp(data: SendOtpRequest, db: AsyncSession = Depends(get_db)):
-    from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
-    if is_supabase_mock():
-        await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
-    else:
-        if "@" in data.target:
-            # If user is already verified in our database, skip resend and return success
-            user = await user_repo.get_by_email(db, data.target)
-            if user and user.is_verified:
-                return SuccessResponse(message="OTP resent successfully (User is already verified).")
+    from app.utils.supabase_auth import is_supabase_mock
+    if not is_supabase_mock() and "@" in data.target:
+        # If user is already verified in our database and they are trying to register/verify, skip and return success
+        user = await user_repo.get_by_email(db, data.target)
+        if user and user.is_verified and data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
+            return SuccessResponse(message="OTP resent successfully (User is already verified).")
 
-            if data.purpose.value in [OtpPurpose.REGISTER.value, OtpPurpose.VERIFY.value]:
-                try:
-                    await SupabaseAuthClient.resend_email(email=data.target, type="signup")
-                except ValidationError as e:
-                    # If email is already confirmed/verified, ignore the error and return success
-                    if "confirmed" in str(e).lower() or "verified" in str(e).lower():
-                        return SuccessResponse(message="OTP resent successfully (User is already verified).")
-                    raise e
-            elif data.purpose.value == OtpPurpose.RESET.value:
-                await SupabaseAuthClient.recover(email=data.target)
-            elif data.purpose.value == OtpPurpose.LOGIN.value:
-                await SupabaseAuthClient.send_login_otp(email=data.target)
-        else:
-            await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
+    # Generate and send locally using custom Brevo SMTP
+    await OTPService.generate_and_send_otp(db, data.target, data.purpose.value)
     return SuccessResponse(message="OTP resent successfully.")
 
 

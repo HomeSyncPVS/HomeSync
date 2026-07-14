@@ -362,3 +362,48 @@ class SupabaseAuthClient:
                 SupabaseAuthClient._handle_error(response)
             
             return response.json()
+
+    @staticmethod
+    async def admin_confirm_user(user_id: str) -> None:
+        """
+        Confirms a user's email address by setting email_confirm to true via the Supabase Admin API.
+        """
+        if is_supabase_mock():
+            logger.info(f"[MOCK AUTH] Admin confirmed user: {user_id}")
+            return
+
+        url = f"{settings.SUPABASE_URL}/auth/v1/admin/users/{user_id}"
+        headers = {
+            "apikey": settings.SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "email_confirm": True
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.put(url, json=body, headers=headers)
+            if response.status_code != 200:
+                SupabaseAuthClient._handle_error(response)
+
+    @staticmethod
+    async def admin_delete_user(user_id: str) -> None:
+        """
+        Deletes a user from Supabase Auth using the service role key.
+        """
+        if is_supabase_mock():
+            logger.info(f"[MOCK AUTH] Admin deleted user: {user_id}")
+            return
+
+        url = f"{settings.SUPABASE_URL}/auth/v1/admin/users/{user_id}"
+        headers = {
+            "apikey": settings.SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(url, headers=headers)
+            if response.status_code not in (200, 204):
+                SupabaseAuthClient._handle_error(response)

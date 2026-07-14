@@ -1,7 +1,10 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger("homesync.auth")
 
 from sqlalchemy import select
 from app.models.society import Society, SocietySettings
@@ -112,6 +115,26 @@ class AuthService:
         )
         user = await user_repo.create(db, obj_in=new_user)
         await db.flush()
+
+        # Custom OTP generation and sending for email confirmation
+        if not is_verified:
+            from app.services.otp import OTPService
+            try:
+                await OTPService.generate_and_send_otp(db, data.email, "register")
+                logger.info(f"[Registration] Custom OTP email sent successfully to {data.email}")
+            except Exception as otp_err:
+                logger.error(f"[Registration Rollback] Failed to send registration OTP email to {data.email}: {str(otp_err)}")
+                
+                # Delete user from Supabase Auth to keep state synchronized
+                try:
+                    await SupabaseAuthClient.admin_delete_user(str(supabase_uid))
+                    logger.info(f"[Registration Rollback] Deleted user {supabase_uid} from Supabase Auth.")
+                except Exception as del_err:
+                    logger.error(f"[Registration Rollback Error] Failed to delete user {supabase_uid} from Supabase Auth: {str(del_err)}")
+                
+                # Propagate the SMTP exception to abort local database transaction
+                raise otp_err
+
         return user
 
     @staticmethod

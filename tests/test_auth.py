@@ -230,3 +230,48 @@ async def test_register_self_healing_failure(client: AsyncClient, db):
         assert response.status_code == 409
         assert response.json()["success"] is False
 
+
+@pytest.mark.asyncio
+async def test_register_smtp_failure_rollback(client: AsyncClient, db):
+    """
+    Test that registration rolls back (deletes from local DB and Supabase Auth)
+    if the registration OTP email fails to send.
+    """
+    email = "rollback-test@homesync.com"
+    payload = {
+        "email": email,
+        "phone": "+1999888775",
+        "password": "SecurePassword!123",
+        "full_name": "Rollback User",
+    }
+
+    mock_user_id = "00000000-0000-0000-0000-000000000002"
+    mock_supabase_user = {
+        "id": mock_user_id,
+        "email": email,
+        "email_confirmed_at": None,
+    }
+
+    with patch("app.utils.supabase_auth.SupabaseAuthClient.signup_user") as mock_signup, \
+         patch("app.services.otp.OTPService.generate_and_send_otp") as mock_send_otp, \
+         patch("app.utils.supabase_auth.SupabaseAuthClient.admin_delete_user") as mock_delete:
+        
+        mock_signup.return_value = mock_supabase_user
+        # Simulate SMTP error
+        mock_send_otp.side_effect = Exception("SMTP connection refused")
+
+        with pytest.raises(Exception) as exc_info:
+            await client.post("/api/v1/auth/register", json=payload)
+        
+        assert "SMTP connection refused" in str(exc_info.value)
+        
+        # Verify user was deleted from Supabase Auth
+        mock_delete.assert_called_once_with(mock_user_id)
+
+        # Verify user does not exist in local database
+        query = select(User).where(User.email == email)
+        result = await db.execute(query)
+        user = result.scalar_one_or_none()
+        assert user is None
+
+

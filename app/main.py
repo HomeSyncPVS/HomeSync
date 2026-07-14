@@ -144,7 +144,28 @@ async def lifespan(app: FastAPI):
     import asyncio
     # Seeding database on startup (skip if running tests to avoid greenlet context issues)
     if "pytest" not in sys.modules:
+        # Step 3 & 9: Verify SMTP environment variables on startup
+        required_smtp_vars = [
+            "SMTP_HOST",
+            "SMTP_PORT",
+            "SMTP_USERNAME",
+            "SMTP_PASSWORD",
+            "SMTP_FROM_EMAIL",
+            "SMTP_FROM_NAME",
+        ]
+        missing_vars = [var for var in required_smtp_vars if not getattr(settings, var, None)]
+        if missing_vars:
+            msg = f"CRITICAL STARTUP FAILURE: Missing required SMTP environment variables: {', '.join(missing_vars)}"
+            logger.error(msg)
+            sys.exit(msg)
+
         await seed_database()
+
+        # Verify SMTP server connectivity on startup
+        from app.utils.email import verify_smtp_connectivity
+        smtp_ok = verify_smtp_connectivity()
+        if not smtp_ok:
+            logger.warning("[SMTP Startup Check] SMTP connectivity test failed. Emails may not be delivered correctly.")
     yield
     # Shutdown logic if any goes here
 

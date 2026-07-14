@@ -38,7 +38,9 @@ export default function OtpVerificationScreen({
 
   // Send initial OTP on load
   useEffect(() => {
-    sendOtp();
+    if (purpose !== 'register') {
+      sendOtp();
+    }
   }, []);
 
   // Cooldown countdown timer logic
