@@ -75,7 +75,12 @@ class AuthService:
 
         # Sign up in Supabase (only email or phone can be provided to Supabase signup at once, so we pass email and store the phone number in our local database)
         supabase_user = await SupabaseAuthClient.signup_user(email=data.email, password=data.password, phone=None)
-        supabase_uid = uuid.UUID(supabase_user["id"])
+        
+        # Extract user ID (handles both real nested 'user' key and mock flat dict)
+        user_id_str = supabase_user.get("id") or supabase_user.get("user", {}).get("id")
+        if not user_id_str:
+            raise ValidationError(detail="Failed to retrieve user ID from Supabase signup response.")
+        supabase_uid = uuid.UUID(user_id_str)
 
         new_user = User(
             id=supabase_uid,
