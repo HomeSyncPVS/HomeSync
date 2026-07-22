@@ -14,6 +14,8 @@ from app.api.v1.notices import router as notices_router
 from app.api.v1.events import router as events_router
 from app.api.v1.debug import router as debug_router
 
+from app.api.v1.subscriptions import router as subscriptions_router
+
 api_router = APIRouter()
 api_router.include_router(auth_router)
 api_router.include_router(societies_router)
@@ -28,4 +30,5 @@ api_router.include_router(analytics_router)
 api_router.include_router(complaints_router, prefix="/complaints", tags=["complaints"])
 api_router.include_router(notices_router, prefix="/notices", tags=["notices"])
 api_router.include_router(events_router, prefix="/events", tags=["events"])
+api_router.include_router(subscriptions_router)
 api_router.include_router(debug_router)

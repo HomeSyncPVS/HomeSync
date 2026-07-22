@@ -6,7 +6,9 @@ import { StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
   StatusBar,
-  ScrollView } from 'react-native';
+  ScrollView,
+  TextInput,
+  Alert } from 'react-native';
 import { apiClient } from '../utils/api';
 import { deleteTokens } from '../utils/storage';
 
@@ -30,6 +32,12 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
   useEffect(() => {
     fetchProfile();
   }, []);
@@ -40,6 +48,8 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
     try {
       const response = await apiClient.get('/auth/me');
       setProfile(response.data);
+      setEditName(response.data.full_name || '');
+      setEditPhone(response.data.phone || '');
     } catch (err: any) {
       setErrorMessage(err.response?.data?.detail || 'Failed to load profile details.');
     } finally {
@@ -47,10 +57,32 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
     }
   };
 
+  const handleSaveProfile = async () => {
+    if (!editName.trim()) {
+      Alert.alert('Required', 'Full Name cannot be empty.');
+      return;
+    }
+    setSaving(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const response = await apiClient.put('/auth/profile', {
+        full_name: editName.trim(),
+        phone: editPhone.trim() || null,
+      });
+      setProfile(response.data);
+      setIsEditing(false);
+      setSuccessMessage('Profile updated successfully!');
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err: any) {
+      setErrorMessage(err.response?.data?.detail || 'Failed to update profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
-      const refreshToken = await apiClient.defaults.headers.common['Authorization']; // Get if cached or storage
-      // Opt-in calling logout endpoint to clean session on backend
       await apiClient.post('/auth/logout', {});
     } catch (err) {
       console.warn('Backend session cleanup skipped or failed');
@@ -78,6 +110,12 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
           <Text style={styles.subtitleText}>Manage your society identity and credentials</Text>
         </View>
 
+        {successMessage && (
+          <View style={styles.successBanner}>
+            <Text style={styles.successText}>✓ {successMessage}</Text>
+          </View>
+        )}
+
         {errorMessage ? (
           <View style={styles.card}>
             <Text style={styles.errorText}>{errorMessage}</Text>
@@ -94,7 +132,7 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
                 <View style={styles.avatarRow}>
                   <View style={styles.avatarBadge}>
                     <Text style={styles.avatarBadgeText}>
-                      {profile.full_name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
+                      {(isEditing ? editName : profile.full_name).split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
                     </Text>
                   </View>
                   <View style={styles.avatarMeta}>
@@ -103,19 +141,57 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
                       <Text style={styles.badgeText}>{profile.role?.name || 'Resident'}</Text>
                     </View>
                   </View>
+                  <TouchableOpacity
+                    style={styles.editToggleButton}
+                    onPress={() => {
+                      if (isEditing) {
+                        setEditName(profile.full_name);
+                        setEditPhone(profile.phone || '');
+                        setIsEditing(false);
+                      } else {
+                        setIsEditing(true);
+                      }
+                    }}
+                  >
+                    <Text style={styles.editToggleText}>{isEditing ? 'Cancel' : '✏️ Edit'}</Text>
+                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.divider} />
 
                 {/* Details Section */}
                 <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Email Address</Text>
-                  <Text style={styles.detailValue}>{profile.email}</Text>
+                  <Text style={styles.detailLabel}>Full Name</Text>
+                  {isEditing ? (
+                    <TextInput
+                      style={styles.editInput}
+                      value={editName}
+                      onChangeText={setEditName}
+                      placeholder="Enter full name"
+                    />
+                  ) : (
+                    <Text style={styles.detailValue}>{profile.full_name}</Text>
+                  )}
+                </View>
+
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Email Address (Read-only)</Text>
+                  <Text style={[styles.detailValue, { color: '#64748B' }]}>{profile.email}</Text>
                 </View>
 
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Phone Number</Text>
-                  <Text style={styles.detailValue}>{profile.phone || 'Not provided'}</Text>
+                  {isEditing ? (
+                    <TextInput
+                      style={styles.editInput}
+                      value={editPhone}
+                      onChangeText={setEditPhone}
+                      placeholder="Enter phone number"
+                      keyboardType="phone-pad"
+                    />
+                  ) : (
+                    <Text style={styles.detailValue}>{profile.phone || 'Not provided'}</Text>
+                  )}
                 </View>
 
                 <View style={styles.detailRow}>
@@ -129,6 +205,16 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
                     {profile.approval_status}
                   </Text>
                 </View>
+
+                {isEditing && (
+                  <TouchableOpacity
+                    style={[styles.saveButton, saving && styles.buttonDisabled]}
+                    onPress={handleSaveProfile}
+                    disabled={saving}
+                  >
+                    {saving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveButtonText}>Save Changes</Text>}
+                  </TouchableOpacity>
+                )}
               </View>
 
               {/* Actions Card */}
@@ -254,6 +340,55 @@ const styles = StyleSheet.create({
   },
   statusPending: {
     color: '#E5484D',
+    fontWeight: '600',
+  },
+  editToggleButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  editToggleText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2F6FED',
+  },
+  editInput: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2F6FED',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#0F172A',
+  },
+  saveButton: {
+    backgroundColor: '#2F6FED',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  successBanner: {
+    backgroundColor: '#DCFCE7',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  successText: {
+    color: '#166534',
+    fontSize: 14,
     fontWeight: '600',
   },
   actionsCard: {

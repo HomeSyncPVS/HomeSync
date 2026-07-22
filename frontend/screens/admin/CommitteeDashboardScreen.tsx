@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { StyleSheet,
+import {
+  StyleSheet,
   Text,
   View,
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
   RefreshControl,
-  StatusBar } from 'react-native';
+  StatusBar
+} from 'react-native';
 import { apiClient } from '../../utils/api';
 
 interface DashboardStats {
@@ -143,7 +145,7 @@ export default function CommitteeDashboardScreen({
 
         {/* Actions Section */}
         <Text style={styles.sectionTitle}>Administrative Actions</Text>
-        
+
         <View style={styles.actionList}>
           <TouchableOpacity style={styles.actionItem} onPress={() => onNavigateToScreen('ResidentApprovals')}>
             <Text style={styles.actionEmoji}>✍️</Text>
@@ -159,6 +161,15 @@ export default function CommitteeDashboardScreen({
             <View style={{ flex: 1 }}>
               <Text style={styles.actionTitle}>Notice Management</Text>
               <Text style={styles.actionDesc}>Create, update, or archive society notices</Text>
+            </View>
+            <Text style={styles.arrowIcon}>❯</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionItem} onPress={() => onNavigateToScreen('Subscription')}>
+            <Text style={styles.actionEmoji}>💎</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.actionTitle}>Society Subscription & Plan</Text>
+              <Text style={styles.actionDesc}>Manage flat tier plan and billing rules</Text>
             </View>
             <Text style={styles.arrowIcon}>❯</Text>
           </TouchableOpacity>

@@ -167,19 +167,17 @@ async def verify_otp(
                 db.add(user)
                 await db.flush()
 
-            # If mock, generate local mock tokens
-            if is_supabase_mock():
-                ip_address = request.client.host if request.client else None
-                user_agent = request.headers.get("user-agent")
-                session_data = await AuthService.create_session_for_user(db, user, ip_address, user_agent)
-                access_token = session_data["access_token"]
-                refresh_token = session_data["refresh_token"]
-                session_id = session_data["session_id"]
-                user_response = UserResponse.model_validate(session_data["user"])
-            else:
-                # If real Supabase, confirm user in Supabase via GoTrue Admin API
+            # Confirm user in Supabase via GoTrue Admin API
+            if not is_supabase_mock():
                 await SupabaseAuthClient.admin_confirm_user(str(user.id))
-                user_response = UserResponse.model_validate(user)
+
+            ip_address = request.client.host if request.client else None
+            user_agent = request.headers.get("user-agent")
+            session_data = await AuthService.create_session_for_user(db, user, ip_address, user_agent)
+            access_token = session_data["access_token"]
+            refresh_token = session_data["refresh_token"]
+            session_id = session_data["session_id"]
+            user_response = UserResponse.model_validate(session_data["user"])
 
     elif data.purpose.value == OtpPurpose.RESET.value:
         user = await user_repo.get_by_email(db, data.target)

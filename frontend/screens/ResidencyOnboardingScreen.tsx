@@ -8,8 +8,13 @@ import { StyleSheet,
   ActivityIndicator,
   Alert,
   Platform,
-  KeyboardAvoidingView } from 'react-native';
+  KeyboardAvoidingView,
+  Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const isSmallDevice = SCREEN_WIDTH < 375;
+const isTablet = SCREEN_WIDTH >= 768;
 import { apiClient } from '../utils/api';
 
 interface ResidencyOnboardingScreenProps {
@@ -48,6 +53,7 @@ export default function ResidencyOnboardingScreen({
 
   // Create residency state
   const [societyName, setSocietyName] = useState('');
+  const [secretaryName, setSecretaryName] = useState('');
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
   const [stateName, setStateName] = useState('');
@@ -141,6 +147,10 @@ export default function ResidencyOnboardingScreen({
       };
 
       const res = await apiClient.post('/societies', payload);
+      // Update locally stored user role so app navigation switches to Society Admin
+      const { saveUserRole } = require('../utils/storage');
+      await saveUserRole('Society Admin');
+
       Alert.alert('Residency Created', `Society created successfully! Your Unique Join Code is: ${res.data.join_code}. Copy this to invite other residents.`, [
         { text: 'Let\'s Go', onPress: onRefreshProfile }
       ]);
@@ -236,13 +246,20 @@ export default function ResidencyOnboardingScreen({
           </View>
         </View>
 
+        <Text style={[styles.sectionHeader, { marginTop: 16 }]}>Secretary / Admin Details</Text>
+
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>Secretary Name *</Text>
+          <TextInput style={styles.input} placeholder="Secretary Name" value={secretaryName} onChangeText={setSecretaryName} />
+        </View>
+
         <View style={styles.row}>
           <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-            <Text style={styles.label}>Phone *</Text>
+            <Text style={styles.label}>Society Mobile *</Text>
             <TextInput style={styles.input} keyboardType="phone-pad" placeholder="9876543210" value={phone} onChangeText={setPhone} />
           </View>
           <View style={[styles.inputGroup, { flex: 1 }]}>
-            <Text style={styles.label}>Email *</Text>
+            <Text style={styles.label}>Society Email *</Text>
             <TextInput style={styles.input} keyboardType="email-address" autoCapitalize="none" placeholder="info@society.com" value={email} onChangeText={setEmail} />
           </View>
         </View>
@@ -260,9 +277,19 @@ export default function ResidencyOnboardingScreen({
           </View>
         </View>
 
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Flats per Floor *</Text>
-          <TextInput style={styles.input} keyboardType="number-pad" value={flatsPerFloor} onChangeText={setFlatsPerFloor} />
+        <View style={styles.row}>
+          <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
+            <Text style={styles.label}>Flats per Floor *</Text>
+            <TextInput style={styles.input} keyboardType="number-pad" value={flatsPerFloor} onChangeText={setFlatsPerFloor} />
+          </View>
+          <View style={[styles.inputGroup, { flex: 1 }]}>
+            <Text style={styles.label}>Total Generated Flats</Text>
+            <View style={[styles.input, { backgroundColor: '#F1F5F9', justifyContent: 'center' }]}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#2F6FED' }}>
+                {(parseInt(numWings) || 0) * (parseInt(floorsPerWing) || 0) * (parseInt(flatsPerFloor) || 0)} Flats
+              </Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.inputGroup}>
@@ -335,44 +362,57 @@ export default function ResidencyOnboardingScreen({
                 📍 {verifiedSociety.address || ''}, {verifiedSociety.region}, {verifiedSociety.city}, {verifiedSociety.state}
               </Text>
 
-              <Text style={styles.selectionTitle}>Select Your Residence Details</Text>
+              {/* 3D Isometric Building Visual Selector */}
+              <Text style={styles.selectionTitle}>🏛️ Interactive 3D Building Floor Plan</Text>
 
-              {/* Wing Selection */}
-              <Text style={styles.dropdownLabel}>Wing</Text>
-              <View style={styles.dropdownGrid}>
+              {/* Wing 3D Selector */}
+              <Text style={styles.dropdownLabel}>SELECT WING</Text>
+              <View style={styles.wing3DRow}>
                 {verifiedSociety.wings.map(w => (
                   <TouchableOpacity
                     key={w.id}
-                    style={[styles.gridSelectOption, selectedWingId === w.id && styles.gridSelectOptionActive]}
+                    style={[styles.wing3DCard, selectedWingId === w.id && styles.wing3DCardActive]}
                     onPress={() => {
                       setSelectedWingId(w.id);
                       setSelectedFloorId('');
                       setSelectedFlatId('');
                     }}
+                    activeOpacity={0.8}
                   >
-                    <Text style={[styles.gridOptionText, selectedWingId === w.id && styles.gridOptionTextActive]}>
+                    <Text style={styles.wing3DIcon}>🏢</Text>
+                    <Text style={[styles.wing3DTitle, selectedWingId === w.id && styles.wing3DTitleActive]}>
                       {w.name}
                     </Text>
+                    <Text style={styles.wing3DSub}>{w.floors.length} Floors</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              {/* Floor Selection */}
+              {/* 3D Vertical Building Floors Isometric Stack */}
               {selectedWingId !== '' && (
                 <>
-                  <Text style={styles.dropdownLabel}>Floor</Text>
-                  <View style={styles.dropdownGrid}>
-                    {floors.map(f => (
+                  <Text style={styles.dropdownLabel}>SELECT FLOOR (ISOMETRIC BUILDING STACK)</Text>
+                  <View style={styles.buildingStackContainer}>
+                    {floors.slice().reverse().map((f, idx) => (
                       <TouchableOpacity
                         key={f.id}
-                        style={[styles.gridSelectOption, selectedFloorId === f.id && styles.gridSelectOptionActive]}
+                        style={[
+                          styles.floor3DSlab,
+                          selectedFloorId === f.id && styles.floor3DSlabActive,
+                          { transform: [{ perspective: 800 }, { rotateX: '12deg' }] }
+                        ]}
                         onPress={() => {
                           setSelectedFloorId(f.id);
                           setSelectedFlatId('');
                         }}
+                        activeOpacity={0.85}
                       >
-                        <Text style={[styles.gridOptionText, selectedFloorId === f.id && styles.gridOptionTextActive]}>
-                          Floor {f.floor_number}
+                        <View style={styles.floor3DLeft}>
+                          <Text style={styles.floor3DNumber}>LEVEL {f.floor_number}</Text>
+                          <Text style={styles.floor3DFlatsCount}>{f.flats.length} Flats</Text>
+                        </View>
+                        <Text style={[styles.floor3DSlabIcon, selectedFloorId === f.id && { color: '#2F6FED' }]}>
+                          {selectedFloorId === f.id ? '▶ SELECTED' : '≡ SELECT'}
                         </Text>
                       </TouchableOpacity>
                     ))}
@@ -380,26 +420,32 @@ export default function ResidencyOnboardingScreen({
                 </>
               )}
 
-              {/* Flat Selection */}
+              {/* 3D Flat Units Grid */}
               {selectedFloorId !== '' && (
                 <>
-                  <Text style={styles.dropdownLabel}>Flat Number</Text>
-                  <View style={styles.dropdownGrid}>
+                  <Text style={styles.dropdownLabel}>SELECT FLAT UNIT</Text>
+                  <View style={styles.flat3DGrid}>
                     {flats.map(fl => (
                       <TouchableOpacity
                         key={fl.id}
-                        style={[styles.gridSelectOption, selectedFlatId === fl.id && styles.gridSelectOptionActive]}
+                        style={[
+                          styles.flat3DBox,
+                          selectedFlatId === fl.id && styles.flat3DBoxActive,
+                          { transform: [{ perspective: 600 }, { rotateX: '8deg' }] }
+                        ]}
                         onPress={() => setSelectedFlatId(fl.id)}
+                        activeOpacity={0.85}
                       >
-                        <Text style={[styles.gridOptionText, selectedFlatId === fl.id && styles.gridOptionTextActive]}>
+                        <Text style={styles.flat3DIcon}>🚪</Text>
+                        <Text style={[styles.flat3DNum, selectedFlatId === fl.id && styles.flat3DNumActive]}>
                           {fl.flat_number}
                         </Text>
+                        <Text style={styles.flat3DTag}>{fl.flat_type || '2BHK'}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 </>
               )}
-
               {selectedFlatId !== '' && (
                 <TouchableOpacity
                   style={[styles.primaryButton, loading && styles.buttonDisabled, { marginTop: 24 }]}
@@ -652,31 +698,136 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 6,
   },
-  dropdownGrid: {
+  wing3DRow: {
+    flexDirection: 'row',
+    marginHorizontal: -4,
+    marginBottom: 16,
+  },
+  wing3DCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginHorizontal: 4,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  wing3DCardActive: {
+    borderColor: '#2F6FED',
+    backgroundColor: '#EFF6FF',
+  },
+  wing3DIcon: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  wing3DTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  wing3DTitleActive: {
+    color: '#2F6FED',
+  },
+  wing3DSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  buildingStackContainer: {
+    marginVertical: 8,
+  },
+  floor3DSlab: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 2, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  floor3DSlabActive: {
+    backgroundColor: '#F0F7FF',
+    borderColor: '#2F6FED',
+    shadowColor: '#2F6FED',
+    shadowOpacity: 0.2,
+  },
+  floor3DLeft: {
+    flexDirection: 'column',
+  },
+  floor3DNumber: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: 0.5,
+  },
+  floor3DFlatsCount: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  floor3DSlabIcon: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#94A3B8',
+  },
+  flat3DGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     marginHorizontal: -4,
+    marginVertical: 8,
   },
-  gridSelectOption: {
-    backgroundColor: '#F1F5F9',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    margin: 4,
-    borderWidth: 1,
+  flat3DBox: {
+    width: isTablet ? '23%' : isSmallDevice ? '48%' : '31%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    margin: '1%',
+    alignItems: 'center',
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 2, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  gridSelectOptionActive: {
+  flat3DBoxActive: {
     backgroundColor: '#EFF6FF',
     borderColor: '#2F6FED',
+    shadowColor: '#2F6FED',
+    shadowOpacity: 0.25,
   },
-  gridOptionText: {
-    fontSize: 13,
-    color: '#475569',
-    fontWeight: '500',
+  flat3DIcon: {
+    fontSize: 18,
+    marginBottom: 4,
   },
-  gridOptionTextActive: {
+  flat3DNum: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  flat3DNumActive: {
     color: '#2F6FED',
+  },
+  flat3DTag: {
+    fontSize: 10,
     fontWeight: '600',
+    color: '#64748B',
+    marginTop: 2,
   },
 });
