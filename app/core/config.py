@@ -64,7 +64,12 @@ class Settings(BaseSettings):
     APPLE_CLIENT_ID: Optional[str] = None
     APPLE_CLIENT_SECRET: Optional[str] = None
 
-    # Mail Settings
+    # Brevo (Sendinblue) Email API Settings
+    BREVO_API_KEY: Optional[str] = None
+    BREVO_SENDER_EMAIL: str = "noreplyhomesyncofficial@gmail.com"
+    BREVO_SENDER_NAME: str = "HomeSync"
+
+    # Legacy SMTP Settings (fallback only — prefer BREVO_API_KEY)
     SMTP_HOST: Optional[str] = None
     SMTP_PORT: Optional[int] = None
     SMTP_USER: Optional[str] = None

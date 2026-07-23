@@ -2,7 +2,8 @@ import logging
 import smtplib
 import asyncio
 import socket
-from typing import Any, Dict, Optional
+import httpx
+from typing import Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
@@ -10,14 +11,94 @@ from app.exceptions.custom import ServiceUnavailableError
 
 logger = logging.getLogger("homesync.email")
 
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+
 
 class EmailService:
+
+    # ==========================================
+    # PRIMARY: Brevo HTTP API
+    # ==========================================
+
     @classmethod
-    def get_smtp_connection(cls) -> smtplib.SMTP:
+    async def _send_via_brevo_api(
+        cls,
+        to_email: str,
+        subject: str,
+        html_content: str,
+        text_content: Optional[str] = None,
+    ) -> None:
         """
-        Establishes and authenticates a TCP connection to the SMTP server.
-        Logs details and bubbles up explicit exceptions on failure.
+        Sends an email using Brevo's transactional email HTTP API.
+        Fully async — no threads required.
+        Docs: https://developers.brevo.com/reference/sendtransacemail
         """
+        payload = {
+            "sender": {
+                "name": settings.BREVO_SENDER_NAME,
+                "email": settings.BREVO_SENDER_EMAIL,
+            },
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "htmlContent": html_content,
+        }
+        if text_content:
+            payload["textContent"] = text_content
+
+        headers = {
+            "api-key": settings.BREVO_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        logger.info(f"[Brevo API] Sending email to {to_email} via Brevo HTTP API...")
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(BREVO_API_URL, json=payload, headers=headers)
+
+            if response.status_code in (200, 201):
+                logger.info(f"[Brevo API] Email accepted for delivery to {to_email} (status {response.status_code})")
+                return
+
+            # Handle known Brevo error codes
+            error_body = response.text
+            logger.error(f"[Brevo API] Error response ({response.status_code}): {error_body}")
+
+            if response.status_code == 401:
+                raise ServiceUnavailableError(
+                    detail="Email service authentication failed. Please contact support.",
+                    error_code="EMAIL_AUTH_FAILED",
+                )
+            if response.status_code == 429:
+                raise ServiceUnavailableError(
+                    detail="Email service rate limit exceeded. Please try again shortly.",
+                    error_code="EMAIL_LIMIT_EXCEEDED",
+                )
+            raise ServiceUnavailableError(
+                detail="Email delivery failed. Please try again later.",
+                error_code="EMAIL_DELIVERY_FAILED",
+            )
+
+        except httpx.TimeoutException:
+            logger.error(f"[Brevo API] Request timed out sending to {to_email}")
+            raise ServiceUnavailableError(
+                detail="Email service timed out. Please try again later.",
+                error_code="EMAIL_TIMEOUT",
+            )
+        except httpx.RequestError as e:
+            logger.error(f"[Brevo API] Network error sending to {to_email}: {str(e)}")
+            raise ServiceUnavailableError(
+                detail="Email service is temporarily unavailable. Please try again later.",
+                error_code="EMAIL_SERVICE_ERROR",
+            )
+
+    # ==========================================
+    # FALLBACK: SMTP (smtplib)
+    # ==========================================
+
+    @classmethod
+    def _get_smtp_connection(cls) -> smtplib.SMTP:
+        """Establishes and authenticates a TCP connection to the SMTP server."""
         smtp_host = settings.SMTP_HOST
         smtp_port = settings.SMTP_PORT or 587
         smtp_user = settings.SMTP_USERNAME or settings.SMTP_USER
@@ -26,19 +107,16 @@ class EmailService:
         if not smtp_host:
             raise ValueError("SMTP_HOST is not configured.")
 
-        # 1. DNS Resolution Check
         try:
             ip = socket.gethostbyname(smtp_host)
             logger.info(f"[SMTP DNS] Resolved {smtp_host} -> {ip}")
         except socket.gaierror as e:
-            logger.error(f"[SMTP DNS Error] Failed to resolve SMTP host {smtp_host}: {str(e)}")
-            raise smtplib.SMTPConnectError(-1, f"SMTP DNS resolution failed for hostname '{smtp_host}': {str(e)}")
+            logger.error(f"[SMTP DNS Error] Failed to resolve {smtp_host}: {str(e)}")
+            raise smtplib.SMTPConnectError(-1, f"SMTP DNS resolution failed for '{smtp_host}': {str(e)}")
 
         server = None
         try:
             logger.info(f"[SMTP TCP] Connecting to {smtp_host}:{smtp_port}...")
-            
-            # Connect based on port protocol (Port 465 SSL, standard STARTTLS otherwise)
             if smtp_port == 465:
                 server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15.0)
             else:
@@ -46,43 +124,15 @@ class EmailService:
                 server.ehlo()
                 server.starttls()
                 server.ehlo()
-                
-            logger.info(f"[SMTP TCP] Connected successfully to {smtp_host}:{smtp_port}")
+            logger.info(f"[SMTP TCP] Connected to {smtp_host}:{smtp_port}")
 
-            # Authentication
             if smtp_user and smtp_password:
                 logger.info(f"[SMTP Auth] Logging in as '{smtp_user}'...")
                 server.login(smtp_user, smtp_password)
                 logger.info("[SMTP Auth] Login successful.")
-                
+
             return server
-            
-        except smtplib.SMTPAuthenticationError as e:
-            logger.error(f"[SMTP Auth Error] Authentication failed for user '{smtp_user}': {str(e)}")
-            if server:
-                try:
-                    server.quit()
-                except Exception:
-                    pass
-            raise e
-        except socket.timeout as e:
-            logger.error(f"[SMTP Network Timeout Error] Connection to {smtp_host}:{smtp_port} timed out: {str(e)}")
-            if server:
-                try:
-                    server.quit()
-                except Exception:
-                    pass
-            raise e
-        except OSError as e:
-            logger.error(f"[SMTP OSError] Network connectivity failure connecting to {smtp_host}:{smtp_port}: {str(e)}")
-            if server:
-                try:
-                    server.quit()
-                except Exception:
-                    pass
-            raise e
         except Exception as e:
-            logger.error(f"[SMTP Connection Error] Failed to establish SMTP session: {str(e)}")
             if server:
                 try:
                     server.quit()
@@ -91,100 +141,112 @@ class EmailService:
             raise e
 
     @classmethod
-    def _send_smtp_sync(cls, to_email: str, subject: str, html_content: str, text_content: Optional[str] = None) -> None:
-        """
-        Synchronous SMTP helper to be run in a separate thread.
-        Uses connection-per-request model with detailed logging and explicit exception bubbling.
-        """
+    def _send_smtp_sync(
+        cls,
+        to_email: str,
+        subject: str,
+        html_content: str,
+        text_content: Optional[str] = None,
+    ) -> None:
+        """Synchronous SMTP fallback — runs in a thread pool."""
         smtp_user = settings.SMTP_USERNAME or settings.SMTP_USER
-        from_name = settings.SMTP_FROM_NAME or "HomeSync"
-        from_email = settings.SMTP_FROM_EMAIL or smtp_user
+        from_name = settings.SMTP_FROM_NAME or settings.EMAILS_FROM_NAME or "HomeSync"
+        from_email = str(settings.SMTP_FROM_EMAIL or settings.EMAILS_FROM_EMAIL or smtp_user)
 
         if not from_email:
-            raise ValueError("SMTP sender email address is not configured. Set SMTP_FROM_EMAIL or SMTP_USERNAME in environment.")
+            raise ValueError("Sender email is not configured.")
 
         if not text_content:
-            # Simple text fallback stripping HTML tags
             text_content = f"Subject: {subject}\n\nPlease view this email in an HTML-compatible client."
 
-        # Create MIME structure
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = f"{from_name} <{from_email}>"
         msg["To"] = to_email
+        msg.attach(MIMEText(text_content, "plain", "utf-8"))
+        msg.attach(MIMEText(html_content, "html", "utf-8"))
 
-        # Attach text part first, then HTML part (standard RFC 2046 alternative layout)
-        part_text = MIMEText(text_content, "plain", "utf-8")
-        part_html = MIMEText(html_content, "html", "utf-8")
-        msg.attach(part_text)
-        msg.attach(part_html)
-
-        server = cls.get_smtp_connection()
+        server = cls._get_smtp_connection()
         try:
-            logger.info(f"[SMTP Transmission] Transmitting email to {to_email}...")
+            logger.info(f"[SMTP] Transmitting to {to_email}...")
             server.sendmail(from_email, [to_email], msg.as_string())
-            logger.info(f"[SMTP Success] Email accepted by SMTP server for delivery to {to_email}")
+            logger.info(f"[SMTP] Email accepted for delivery to {to_email}")
         except smtplib.SMTPDataError as e:
-            code, msg_bytes = e.args[0], e.args[1]
-            err_msg = msg_bytes.decode("utf-8", errors="replace") if isinstance(msg_bytes, bytes) else str(msg_bytes)
-            logger.error(f"[SMTP Transmission Error] Failed to send email to {to_email}: ({code}, {err_msg})")
+            code = e.args[0]
+            err_msg = e.args[1].decode("utf-8", errors="replace") if isinstance(e.args[1], bytes) else str(e.args[1])
+            logger.error(f"[SMTP Error] ({code}) {err_msg}")
             if code == 550 and "Daily user sending limit" in err_msg:
                 raise ServiceUnavailableError(
-                    detail="Email service daily sending limit exceeded. Please try again tomorrow or contact support.",
-                    error_code="EMAIL_LIMIT_EXCEEDED"
+                    detail="Email service daily sending limit exceeded. Please try again later.",
+                    error_code="EMAIL_LIMIT_EXCEEDED",
                 )
             raise ServiceUnavailableError(
                 detail="Failed to deliver email. Please try again later.",
-                error_code="EMAIL_DELIVERY_FAILED"
+                error_code="EMAIL_DELIVERY_FAILED",
             )
         except smtplib.SMTPAuthenticationError as e:
-            logger.error(f"[SMTP Auth Error] Authentication failed sending to {to_email}: {str(e)}")
+            logger.error(f"[SMTP Auth Error] {str(e)}")
             raise ServiceUnavailableError(
-                detail="Email service authentication failed. Please contact support.",
-                error_code="EMAIL_AUTH_FAILED"
+                detail="Email service authentication failed.",
+                error_code="EMAIL_AUTH_FAILED",
             )
         except smtplib.SMTPException as e:
-            logger.error(f"[SMTP Error] Failed to send email to {to_email}: {str(e)}")
+            logger.error(f"[SMTP Error] {str(e)}")
             raise ServiceUnavailableError(
-                detail="Email service is temporarily unavailable. Please try again later.",
-                error_code="EMAIL_SERVICE_ERROR"
+                detail="Email service is temporarily unavailable.",
+                error_code="EMAIL_SERVICE_ERROR",
             )
-        except Exception as e:
-            logger.error(f"[SMTP Transmission Error] Failed to send email to {to_email}: {str(e)}")
-            raise e
         finally:
-            if server:
-                try:
-                    server.quit()
-                except Exception:
-                    pass
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+    # ==========================================
+    # PUBLIC INTERFACE
+    # ==========================================
 
     @classmethod
-    async def send_email(cls, to_email: str, subject: str, html_content: str, text_content: Optional[str] = None) -> None:
+    async def send_email(
+        cls,
+        to_email: str,
+        subject: str,
+        html_content: str,
+        text_content: Optional[str] = None,
+    ) -> None:
         """
-        Public async send method. Delegates SMTP delivery to a separate worker thread.
+        Primary send method.
+        Uses Brevo HTTP API if BREVO_API_KEY is set, otherwise falls back to SMTP.
+        Logs a mock in development if neither is configured.
         """
-        if not settings.SMTP_HOST:
-            logger.warning(
-                f"\n--- [DEVELOPMENT EMAIL MOCK] ---\n"
-                f"To: {to_email}\n"
-                f"Subject: {subject}\n"
-                f"Body (HTML):\n{html_content}\n"
-                f"---------------------------------\n"
-            )
+        if settings.BREVO_API_KEY:
+            await cls._send_via_brevo_api(to_email, subject, html_content, text_content)
             return
 
-        # Explicitly run in thread pool to prevent blocking event loop
-        await asyncio.to_thread(cls._send_smtp_sync, to_email, subject, html_content, text_content)
+        if settings.SMTP_HOST:
+            logger.warning("[Email] BREVO_API_KEY not set — falling back to SMTP relay.")
+            await asyncio.to_thread(cls._send_smtp_sync, to_email, subject, html_content, text_content)
+            return
+
+        # Development mock — no sending configured
+        logger.warning(
+            f"\n--- [DEVELOPMENT EMAIL MOCK] ---\n"
+            f"To: {to_email}\n"
+            f"Subject: {subject}\n"
+            f"Body (HTML):\n{html_content}\n"
+            f"---------------------------------\n"
+        )
 
     @classmethod
     async def send_otp_email(cls, email: str, otp: str, purpose: str) -> None:
-        """
-        Renders and transmits the 6-digit OTP code email.
-        """
+        """Renders and sends the 6-digit OTP email."""
         if purpose in ("register", "verify"):
             subject = "Verify Your Email"
-            text_content = f"Hello,\n\nYour verification code is: {otp}\n\nThis code is valid for 10 minutes.\n\nIf you did not request this, you can safely ignore this email."
+            text_content = (
+                f"Hello,\n\nYour verification code is: {otp}\n\n"
+                f"This code is valid for 10 minutes.\n\n"
+                f"If you did not request this, you can safely ignore this email."
+            )
             html_content = f"""
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 30px; border: 1px solid #eee; border-radius: 10px;">
                 <h1 style="color: #2F6FED; text-align: center;">Verify Your Email 📧</h1>
@@ -197,7 +259,11 @@ class EmailService:
             """
         else:
             subject = f"Your HomeSync OTP Code for {purpose.capitalize()}"
-            text_content = f"Hello,\n\nYour OTP code for {purpose} is: {otp}\n\nThis code expires in 10 minutes.\n\nIf you did not request this, you can safely ignore this email."
+            text_content = (
+                f"Hello,\n\nYour OTP code for {purpose} is: {otp}\n\n"
+                f"This code expires in 10 minutes.\n\n"
+                f"If you did not request this, you can safely ignore this email."
+            )
             html_content = f"""
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 30px; border: 1px solid #eee; border-radius: 10px;">
                 <h1 style="color: #2F6FED; text-align: center;">One-Time Password (OTP) 🔐</h1>
@@ -211,12 +277,15 @@ class EmailService:
 
     @classmethod
     async def send_password_reset_email(cls, email: str, token: str) -> None:
-        """
-        Renders and transmits the password reset link email.
-        """
+        """Renders and sends the password reset link email."""
         subject = "Reset your HomeSync Password"
         link = f"{settings.BACKEND_URL}/api/v1/auth/reset-password?token={token}"
-        text_content = f"Password Reset Request 🔑\n\nWe received a request to reset your password. Click the link below to reset your password:\n\n{link}\n\nIf you did not request this, you can safely ignore this email."
+        text_content = (
+            f"Password Reset Request 🔑\n\n"
+            f"We received a request to reset your password.\n\n"
+            f"Reset link: {link}\n\n"
+            f"If you did not request this, you can safely ignore this email."
+        )
         html_content = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 30px; border: 1px solid #eee; border-radius: 10px;">
             <h1 style="color: #2F6FED;">Password Reset Request 🔑</h1>
@@ -234,65 +303,53 @@ class EmailService:
 
 def verify_smtp_connectivity() -> bool:
     """
-    Standalone SMTP connectivity test run during application startup.
-    Performs DNS resolution and attempts a brief TCP connection test
-    to verify network access to the SMTP server.
+    Startup connectivity check.
+    When BREVO_API_KEY is set this is a no-op (HTTP API needs no pre-check).
+    Only performs a TCP test when falling back to SMTP relay.
     """
+    if settings.BREVO_API_KEY:
+        logger.info("[Email Startup] BREVO_API_KEY is configured. Using Brevo HTTP API — skipping SMTP connectivity check.")
+        return True
+
     smtp_host = settings.SMTP_HOST
     smtp_port = settings.SMTP_PORT or 587
-    
+
     if not smtp_host:
-        logger.warning("[SMTP Startup Check] SMTP_HOST is not configured. Standalone email service is disabled (running in DEV MOCK mode).")
-        return False
-        
-    logger.info(f"[SMTP Startup Check] Starting SMTP connectivity test for {smtp_host}:{smtp_port}...")
-    
-    # 1. DNS Resolution
-    try:
-        ip = socket.gethostbyname(smtp_host)
-        logger.info(f"[SMTP Startup Check] DNS resolved successfully: {smtp_host} -> {ip}")
-    except socket.gaierror as e:
-        logger.error(
-            f"[SMTP Startup Check] DNS resolution failed for {smtp_host}: {str(e)}. "
-            "Please check if the hostname is correct and that the host machine has outbound DNS/internet access."
-        )
+        logger.warning("[Email Startup] Neither BREVO_API_KEY nor SMTP_HOST is configured. Running in DEV MOCK mode.")
         return False
 
-    # 2. Outbound Network Connectivity Check
+    logger.info(f"[SMTP Startup] Testing connectivity to {smtp_host}:{smtp_port}...")
+    try:
+        ip = socket.gethostbyname(smtp_host)
+        logger.info(f"[SMTP Startup] DNS resolved: {smtp_host} -> {ip}")
+    except socket.gaierror as e:
+        logger.error(f"[SMTP Startup] DNS resolution failed for {smtp_host}: {str(e)}")
+        return False
+
     try:
         s = socket.create_connection((smtp_host, smtp_port), timeout=5.0)
         s.close()
-        logger.info(f"[SMTP Startup Check] Success! Outbound TCP connection to {smtp_host}:{smtp_port} established.")
+        logger.info(f"[SMTP Startup] TCP connection to {smtp_host}:{smtp_port} OK.")
         return True
     except socket.timeout:
-        logger.error(
-            f"[SMTP Startup Check] Connection timeout to {smtp_host}:{smtp_port}. "
-            "This indicates outbound TCP traffic is being blocked at the firewall level. "
-            "NOTE: Railway trial/hobby plans block ports 25, 465, and 587 by default. "
-            "To resolve this, upgrade to a Pro plan or configure an SMTP relay using port 2525."
-        )
+        logger.error(f"[SMTP Startup] Connection timeout to {smtp_host}:{smtp_port}. Port may be blocked.")
         return False
-    except ConnectionRefusedError:
-        logger.error(
-            f"[SMTP Startup Check] Connection refused by {smtp_host}:{smtp_port}. "
-            "Verify that the port number is correct and that the destination server is accepting connections on this port."
-        )
-        return False
-    except OSError as e:
-        logger.error(
-            f"[SMTP Startup Check] Network connectivity failure connecting to {smtp_host}:{smtp_port}: {str(e)}. "
-            "If you see '[Errno 101] Network is unreachable', it confirms that Railway's outbound SMTP blocking "
-            "is active on your current hosting tier."
-        )
+    except (ConnectionRefusedError, OSError) as e:
+        logger.error(f"[SMTP Startup] Connection failed to {smtp_host}:{smtp_port}: {str(e)}")
         return False
 
 
-# Re-expose top-level helper functions for backward compatibility
+# ==========================================
+# Backward-compatible top-level helpers
+# ==========================================
+
 async def send_email(to_email: str, subject: str, html_content: str, text_content: Optional[str] = None) -> None:
     await EmailService.send_email(to_email, subject, html_content, text_content)
 
+
 async def send_otp_email(email: str, otp: str, purpose: str) -> None:
     await EmailService.send_otp_email(email, otp, purpose)
+
 
 async def send_password_reset_email(email: str, token: str) -> None:
     await EmailService.send_password_reset_email(email, token)
