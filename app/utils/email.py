@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
+from app.exceptions.custom import ServiceUnavailableError
 
 logger = logging.getLogger("homesync.email")
 
@@ -123,6 +124,31 @@ class EmailService:
             logger.info(f"[SMTP Transmission] Transmitting email to {to_email}...")
             server.sendmail(from_email, [to_email], msg.as_string())
             logger.info(f"[SMTP Success] Email accepted by SMTP server for delivery to {to_email}")
+        except smtplib.SMTPDataError as e:
+            code, msg_bytes = e.args[0], e.args[1]
+            err_msg = msg_bytes.decode("utf-8", errors="replace") if isinstance(msg_bytes, bytes) else str(msg_bytes)
+            logger.error(f"[SMTP Transmission Error] Failed to send email to {to_email}: ({code}, {err_msg})")
+            if code == 550 and "Daily user sending limit" in err_msg:
+                raise ServiceUnavailableError(
+                    detail="Email service daily sending limit exceeded. Please try again tomorrow or contact support.",
+                    error_code="EMAIL_LIMIT_EXCEEDED"
+                )
+            raise ServiceUnavailableError(
+                detail="Failed to deliver email. Please try again later.",
+                error_code="EMAIL_DELIVERY_FAILED"
+            )
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"[SMTP Auth Error] Authentication failed sending to {to_email}: {str(e)}")
+            raise ServiceUnavailableError(
+                detail="Email service authentication failed. Please contact support.",
+                error_code="EMAIL_AUTH_FAILED"
+            )
+        except smtplib.SMTPException as e:
+            logger.error(f"[SMTP Error] Failed to send email to {to_email}: {str(e)}")
+            raise ServiceUnavailableError(
+                detail="Email service is temporarily unavailable. Please try again later.",
+                error_code="EMAIL_SERVICE_ERROR"
+            )
         except Exception as e:
             logger.error(f"[SMTP Transmission Error] Failed to send email to {to_email}: {str(e)}")
             raise e

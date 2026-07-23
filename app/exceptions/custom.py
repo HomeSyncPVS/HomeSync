@@ -78,3 +78,12 @@ class DatabaseError(BaseAppException):
             error_code=error_code,
             status_code=500,
         )
+
+
+class ServiceUnavailableError(BaseAppException):
+    def __init__(self, detail: str = "An external service is temporarily unavailable. Please try again later.", error_code: str = "SERVICE_UNAVAILABLE"):
+        super().__init__(
+            detail=detail,
+            error_code=error_code,
+            status_code=503,
+        )
