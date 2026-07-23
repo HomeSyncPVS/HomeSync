@@ -206,7 +206,7 @@ function AppContent() {
   // Profile and OTP helper state
   const [userProfile, setUserProfile] = useState<any>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
-  const [otpPurpose, setOtpPurpose] = useState<'register' | 'reset'>('register');
+  const [otpPurpose, setOtpPurpose] = useState<'register' | 'reset' | 'login'>('register');
 
   // Register global API client logout callback
   useEffect(() => {
@@ -758,6 +758,11 @@ function AppContent() {
             onLoginSuccess={handleLoginSuccess}
             onNavigateToRegister={() => setAppState('register')}
             onNavigateToForgotPassword={() => setAppState('forgot_password')}
+            onLoginWithOtp={(target) => {
+              setOtpTarget(target);
+              setOtpPurpose('login');
+              setAppState('otp');
+            }}
           />
           <StatusBar style="auto" />
         </>

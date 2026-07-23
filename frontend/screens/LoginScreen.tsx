@@ -16,6 +16,7 @@ interface LoginScreenProps {
   onLoginSuccess: (role: string) => void;
   onNavigateToRegister: () => void;
   onNavigateToForgotPassword: () => void;
+  onLoginWithOtp: (target: string) => void;
   apiBaseUrl?: string;
 }
 
@@ -23,7 +24,8 @@ export default function LoginScreen({
   onLoginSuccess,
   onNavigateToRegister,
   onNavigateToForgotPassword,
-  apiBaseUrl = 'http://10.0.2.2:8000/api/v1'
+  onLoginWithOtp,
+  apiBaseUrl = 'http://172.171.15.222:8000/api/v1'
 }: LoginScreenProps) {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -103,11 +105,39 @@ export default function LoginScreen({
     }
   };
 
+  const handleRequestLoginOtp = async () => {
+    if (!identifier.trim()) {
+      setErrorMessage('Please enter your email address to receive OTP');
+      return;
+    }
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/auth/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target: identifier.trim(),
+          purpose: 'LOGIN',
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to send OTP.');
+      }
+      onLoginWithOtp(identifier.trim());
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to send OTP. Please check your email.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeContainer}>
       <StatusBar barStyle="dark-content" backgroundColor="#F7F8FA" />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboardContainer}
       >
         <ScrollView
@@ -194,6 +224,16 @@ export default function LoginScreen({
               ) : (
                 <Text style={styles.buttonText}>Sign In</Text>
               )}
+            </TouchableOpacity>
+
+            {/* Login with OTP Button */}
+            <TouchableOpacity
+              style={[styles.otpButton, loading && styles.buttonDisabled]}
+              onPress={handleRequestLoginOtp}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.otpButtonText}>Sign In with Email OTP 📩</Text>
             </TouchableOpacity>
           </View>
 
@@ -356,6 +396,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+    fontFamily: 'System',
+  },
+  otpButton: {
+    backgroundColor: '#F0F5FF',
+    borderRadius: 16,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#D0E1FD',
+  },
+  otpButtonText: {
+    color: '#2F6FED',
+    fontSize: 15,
+    fontWeight: '600',
     fontFamily: 'System',
   },
   footerContainer: {

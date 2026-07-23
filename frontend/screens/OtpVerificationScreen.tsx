@@ -13,7 +13,7 @@ import { StyleSheet,
 
 interface OtpVerificationScreenProps {
   target: string; // The email/phone number destination
-  purpose?: 'register' | 'reset';
+  purpose?: 'register' | 'reset' | 'login';
   onVerificationSuccess: (token?: string, access_token?: string, refresh_token?: string, role?: string) => void;
   onNavigateBack: () => void;
   apiBaseUrl?: string;
@@ -24,7 +24,7 @@ export default function OtpVerificationScreen({
   purpose = 'register',
   onVerificationSuccess,
   onNavigateBack,
-  apiBaseUrl = 'http://10.0.2.2:8000/api/v1',
+  apiBaseUrl = 'http://172.171.15.222:8000/api/v1',
 }: OtpVerificationScreenProps) {
   const [code, setCode] = useState<string[]>(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
@@ -36,12 +36,8 @@ export default function OtpVerificationScreen({
   // Refs for each digit TextInput box to support autofocusing next/previous box
   const inputRefs = useRef<Array<TextInput | null>>([]);
 
-  // Send initial OTP on load
-  useEffect(() => {
-    if (purpose !== 'register') {
-      sendOtp();
-    }
-  }, []);
+  // Note: Registration and Login endpoints automatically generate and transmit initial OTP via SMTP
+  // Manual sendOtp is only triggered when user taps 'Resend' button
 
   // Cooldown countdown timer logic
   useEffect(() => {
@@ -78,10 +74,8 @@ export default function OtpVerificationScreen({
         throw new Error(data.detail || 'Failed to send OTP code.');
       }
 
-      if (isResend) {
-        setSuccessMessage('A fresh OTP code has been sent!');
-        setCooldown(60); // Reset timer
-      }
+      setSuccessMessage('A fresh OTP code has been sent to your email!');
+      setCooldown(60); // Reset timer
     } catch (err: any) {
       setErrorMessage(err.message || 'Error occurred while sending OTP.');
     } finally {
@@ -90,8 +84,22 @@ export default function OtpVerificationScreen({
   };
 
   const handleInputChange = (text: string, index: number) => {
-    // Only accept numeric entries
     const sanitized = text.replace(/[^0-9]/g, '');
+    
+    // Support multi-character paste (e.g. user pastes full 6-digit OTP code)
+    if (sanitized.length > 1) {
+      const pastedDigits = sanitized.slice(0, 6).split('');
+      const newCode = [...code];
+      pastedDigits.forEach((d, i) => {
+        newCode[i] = d;
+      });
+      setCode(newCode);
+      if (errorMessage) setErrorMessage(null);
+      // Focus the last input box or submit
+      inputRefs.current[Math.min(pastedDigits.length, 5)]?.focus();
+      return;
+    }
+
     const newCode = [...code];
     newCode[index] = sanitized;
     setCode(newCode);
@@ -105,9 +113,14 @@ export default function OtpVerificationScreen({
   };
 
   const handleKeyPress = (e: any, index: number) => {
-    // Handle backspace when input box is empty to focus previous input box
-    if (e.nativeEvent.key === 'Backspace' && code[index] === '' && index > 0) {
-      inputRefs.current[index - 1]?.focus();
+    if (e.nativeEvent.key === 'Backspace') {
+      if (code[index] === '' && index > 0) {
+        inputRefs.current[index - 1]?.focus();
+      } else {
+        const newCode = [...code];
+        newCode[index] = '';
+        setCode(newCode);
+      }
     }
   };
 
@@ -203,7 +216,7 @@ export default function OtpVerificationScreen({
                   ref={(el) => { inputRefs.current[index] = el; }}
                   style={styles.otpBox}
                   keyboardType="number-pad"
-                  maxLength={1}
+                  textContentType="oneTimeCode"
                   value={digit}
                   onChangeText={(text) => handleInputChange(text, index)}
                   onKeyPress={(e) => handleKeyPress(e, index)}

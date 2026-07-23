@@ -20,7 +20,7 @@ interface RegisterScreenProps {
 export default function RegisterScreen({
   onRegisterSuccess,
   onNavigateToLogin,
-  apiBaseUrl = 'http://10.0.2.2:8000/api/v1',
+  apiBaseUrl = 'http://172.171.15.222:8000/api/v1',
 }: RegisterScreenProps) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -77,8 +77,8 @@ export default function RegisterScreen({
         throw new Error(data.detail || 'Registration failed. Try again.');
       }
 
-      // Success: Route to OTP Verification Screen, passing email/phone target and verification state
-      onRegisterSuccess(email.trim(), data.user?.is_verified);
+      // Success: Always route to OTP Verification Screen upon registration
+      onRegisterSuccess(email.trim(), false);
     } catch (err: any) {
       setErrorMessage(err.message || 'An error occurred. Please try again.');
     } finally {
@@ -90,7 +90,7 @@ export default function RegisterScreen({
     <SafeAreaView style={styles.safeContainer}>
       <StatusBar barStyle="dark-content" backgroundColor="#F7F8FA" />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboardContainer}
       >
         <ScrollView

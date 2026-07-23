@@ -28,3 +28,8 @@ node_modules/
 .expo/
 web-build/
 dist/
+
+# Gemini Agents & Skills
+.agents/
+skills-lock.json
+

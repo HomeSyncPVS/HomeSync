@@ -280,7 +280,7 @@ class SupabaseAuthClient:
         }
         body = {
             "email": email,
-            "create_user": False
+            "create_user": True
         }
 
         async with httpx.AsyncClient() as client:

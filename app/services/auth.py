@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("homesync.auth")
 
+from app.db.database import AsyncSessionLocal
 from sqlalchemy import select
 from app.models.society import Society, SocietySettings
 from app.models.wing import Wing
@@ -98,9 +99,8 @@ class AuthService:
             raise ValidationError(detail="Failed to retrieve user ID from Supabase signup response.")
         supabase_uid = uuid.UUID(user_id_str)
 
-        # Detect if user was auto-confirmed on signup (e.g. if "Confirm email" is disabled in Supabase)
-        user_obj = supabase_user.get("user", {}) if "user" in supabase_user else supabase_user
-        is_verified = user_obj.get("email_confirmed_at") is not None
+        # Send custom OTP email for verification
+        is_verified = False
 
         new_user = User(
             id=supabase_uid,
@@ -119,21 +119,18 @@ class AuthService:
         # Custom OTP generation and sending for email confirmation
         if not is_verified:
             from app.services.otp import OTPService
-            try:
-                await OTPService.generate_and_send_otp(db, data.email, "register")
-                logger.info(f"[Registration] Custom OTP email sent successfully to {data.email}")
-            except Exception as otp_err:
-                logger.error(f"[Registration Rollback] Failed to send registration OTP email to {data.email}: {str(otp_err)}")
-                
-                # Delete user from Supabase Auth to keep state synchronized
-                try:
-                    await SupabaseAuthClient.admin_delete_user(str(supabase_uid))
-                    logger.info(f"[Registration Rollback] Deleted user {supabase_uid} from Supabase Auth.")
-                except Exception as del_err:
-                    logger.error(f"[Registration Rollback Error] Failed to delete user {supabase_uid} from Supabase Auth: {str(del_err)}")
-                
-                # Propagate the SMTP exception to abort local database transaction
-                raise otp_err
+            import asyncio
+
+            async def _send_otp_background():
+                async with AsyncSessionLocal() as bg_db:
+                    try:
+                        await OTPService.generate_and_send_otp(bg_db, data.email, "register")
+                        await bg_db.commit()
+                        logger.info(f"[Registration] Custom OTP email sent successfully to {data.email}")
+                    except Exception as otp_err:
+                        logger.error(f"[Registration Background Error] Failed to send registration OTP email to {data.email}: {str(otp_err)}")
+
+            asyncio.create_task(_send_otp_background())
 
         return user
 
