@@ -64,12 +64,32 @@ class Settings(BaseSettings):
     APPLE_CLIENT_ID: Optional[str] = None
     APPLE_CLIENT_SECRET: Optional[str] = None
 
-    # Brevo (Sendinblue) Email API Settings
+    # Email Delivery Provider (gmail | brevo_smtp | brevo_api | mock)
+    EMAIL_PROVIDER: str = "gmail"
+
+    # Gmail SMTP Settings
+    GMAIL_SMTP_HOST: str = "smtp.gmail.com"
+    GMAIL_SMTP_PORT: int = 587
+    GMAIL_SMTP_USER: Optional[str] = None
+    GMAIL_SMTP_PASSWORD: Optional[str] = None
+    GMAIL_FROM_EMAIL: Optional[EmailStr] = None
+    GMAIL_FROM_NAME: str = "HomeSync"
+
+    # Brevo SMTP Settings
+    BREVO_SMTP_HOST: str = "smtp-relay.brevo.com"
+    BREVO_SMTP_PORT: int = 587
+    BREVO_SMTP_USER: Optional[str] = None
+    BREVO_SMTP_USERNAME: Optional[str] = None
+    BREVO_SMTP_PASSWORD: Optional[str] = None
+    BREVO_FROM_EMAIL: Optional[EmailStr] = None
+    BREVO_FROM_NAME: str = "HomeSync"
+
+    # Brevo HTTP API Settings
     BREVO_API_KEY: Optional[str] = None
     BREVO_SENDER_EMAIL: str = "noreplyhomesyncofficial@gmail.com"
     BREVO_SENDER_NAME: str = "HomeSync"
 
-    # Legacy SMTP Settings (fallback only — prefer BREVO_API_KEY)
+    # Generic SMTP Settings (Fallback)
     SMTP_HOST: Optional[str] = None
     SMTP_PORT: Optional[int] = None
     SMTP_USER: Optional[str] = None
@@ -79,6 +99,8 @@ class Settings(BaseSettings):
     EMAILS_FROM_NAME: Optional[str] = None
     SMTP_FROM_EMAIL: Optional[EmailStr] = None
     SMTP_FROM_NAME: Optional[str] = None
+
+
 
     BACKEND_URL: str = "https://homesync-production-8952.up.railway.app"
     ENVIRONMENT: str = "development"

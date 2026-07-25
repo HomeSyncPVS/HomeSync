@@ -93,30 +93,124 @@ class EmailService:
             )
 
     # ==========================================
-    # FALLBACK: SMTP (smtplib)
+    # SMTP CONFIG & CONNECTIONS (Gmail / Brevo)
     # ==========================================
 
     @classmethod
-    def _get_smtp_connection(cls) -> smtplib.SMTP:
-        """Establishes and authenticates a TCP connection to the SMTP server."""
-        smtp_host = settings.SMTP_HOST
-        smtp_port = settings.SMTP_PORT or 587
-        smtp_user = settings.SMTP_USERNAME or settings.SMTP_USER
-        smtp_password = settings.SMTP_PASSWORD
+    def get_smtp_config(cls) -> dict:
+        """
+        Resolves SMTP credentials and settings dynamically based on EMAIL_PROVIDER.
+        Supported EMAIL_PROVIDER values:
+          - 'gmail' or 'gmail_smtp'
+          - 'brevo_smtp'
+          - 'brevo' or 'brevo_api'
+          - 'mock'
+        """
+        provider = getattr(settings, "EMAIL_PROVIDER", "gmail").lower().strip()
+
+        if provider in ("gmail", "gmail_smtp"):
+            smtp_host = settings.GMAIL_SMTP_HOST or "smtp.gmail.com"
+            smtp_port = settings.GMAIL_SMTP_PORT or 587
+            smtp_user = settings.GMAIL_SMTP_USER
+            smtp_password = settings.GMAIL_SMTP_PASSWORD
+            from_email = settings.GMAIL_FROM_EMAIL or smtp_user
+            from_name = settings.GMAIL_FROM_NAME or "HomeSync"
+            provider_type = "gmail"
+        elif provider in ("brevo_smtp", "brevo-smtp"):
+            smtp_host = settings.BREVO_SMTP_HOST or settings.SMTP_HOST or "smtp-relay.brevo.com"
+            smtp_port = settings.BREVO_SMTP_PORT or settings.SMTP_PORT or 587
+            smtp_user = (
+                settings.BREVO_SMTP_USERNAME
+                or settings.BREVO_SMTP_USER
+                or settings.SMTP_USERNAME
+                or settings.SMTP_USER
+            )
+            smtp_password = settings.BREVO_SMTP_PASSWORD or settings.SMTP_PASSWORD
+            from_email = (
+                settings.BREVO_FROM_EMAIL
+                or settings.SMTP_FROM_EMAIL
+                or settings.EMAILS_FROM_EMAIL
+                or settings.BREVO_SENDER_EMAIL
+            )
+            from_name = (
+                settings.BREVO_FROM_NAME
+                or settings.SMTP_FROM_NAME
+                or settings.EMAILS_FROM_NAME
+                or "HomeSync"
+            )
+            provider_type = "brevo_smtp"
+        elif provider in ("brevo", "brevo_api", "brevo-api"):
+            provider_type = "brevo_api"
+            smtp_host = None
+            smtp_port = None
+            smtp_user = None
+            smtp_password = None
+            from_email = settings.BREVO_SENDER_EMAIL
+            from_name = settings.BREVO_SENDER_NAME
+        elif provider == "mock":
+            provider_type = "mock"
+            smtp_host = None
+            smtp_port = None
+            smtp_user = None
+            smtp_password = None
+            from_email = "mock@homesync.local"
+            from_name = "HomeSync Mock"
+        else:
+            # Fallback to generic SMTP
+            smtp_host = settings.SMTP_HOST or settings.GMAIL_SMTP_HOST or "smtp.gmail.com"
+            smtp_port = settings.SMTP_PORT or settings.GMAIL_SMTP_PORT or 587
+            smtp_user = (
+                settings.SMTP_USERNAME
+                or settings.SMTP_USER
+                or settings.GMAIL_SMTP_USER
+            )
+            smtp_password = settings.SMTP_PASSWORD or settings.GMAIL_SMTP_PASSWORD
+            from_email = (
+                settings.SMTP_FROM_EMAIL
+                or settings.EMAILS_FROM_EMAIL
+                or settings.GMAIL_FROM_EMAIL
+                or smtp_user
+            )
+            from_name = (
+                settings.SMTP_FROM_NAME
+                or settings.EMAILS_FROM_NAME
+                or settings.GMAIL_FROM_NAME
+                or "HomeSync"
+            )
+            provider_type = "smtp"
+
+        return {
+            "provider_type": provider_type,
+            "smtp_host": smtp_host,
+            "smtp_port": smtp_port,
+            "smtp_user": smtp_user,
+            "smtp_password": smtp_password,
+            "from_email": from_email,
+            "from_name": from_name,
+        }
+
+    @classmethod
+    def get_smtp_connection(cls) -> smtplib.SMTP:
+        """Establishes and authenticates a TCP connection to the active SMTP server."""
+        cfg = cls.get_smtp_config()
+        smtp_host = cfg["smtp_host"]
+        smtp_port = cfg["smtp_port"] or 587
+        smtp_user = cfg["smtp_user"]
+        smtp_password = cfg["smtp_password"]
 
         if not smtp_host:
-            raise ValueError("SMTP_HOST is not configured.")
+            raise ValueError(f"SMTP host is not configured for provider '{settings.EMAIL_PROVIDER}'.")
 
         try:
             ip = socket.gethostbyname(smtp_host)
-            logger.info(f"[SMTP DNS] Resolved {smtp_host} -> {ip}")
+            logger.info(f"[{cfg['provider_type'].upper()} DNS] Resolved {smtp_host} -> {ip}")
         except socket.gaierror as e:
-            logger.error(f"[SMTP DNS Error] Failed to resolve {smtp_host}: {str(e)}")
+            logger.error(f"[{cfg['provider_type'].upper()} DNS Error] Failed to resolve {smtp_host}: {str(e)}")
             raise smtplib.SMTPConnectError(-1, f"SMTP DNS resolution failed for '{smtp_host}': {str(e)}")
 
         server = None
         try:
-            logger.info(f"[SMTP TCP] Connecting to {smtp_host}:{smtp_port}...")
+            logger.info(f"[{cfg['provider_type'].upper()} TCP] Connecting to {smtp_host}:{smtp_port}...")
             if smtp_port == 465:
                 server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15.0)
             else:
@@ -124,12 +218,12 @@ class EmailService:
                 server.ehlo()
                 server.starttls()
                 server.ehlo()
-            logger.info(f"[SMTP TCP] Connected to {smtp_host}:{smtp_port}")
+            logger.info(f"[{cfg['provider_type'].upper()} TCP] Connected to {smtp_host}:{smtp_port}")
 
             if smtp_user and smtp_password:
-                logger.info(f"[SMTP Auth] Logging in as '{smtp_user}'...")
+                logger.info(f"[{cfg['provider_type'].upper()} Auth] Logging in as '{smtp_user}'...")
                 server.login(smtp_user, smtp_password)
-                logger.info("[SMTP Auth] Login successful.")
+                logger.info(f"[{cfg['provider_type'].upper()} Auth] Login successful.")
 
             return server
         except Exception as e:
@@ -140,6 +234,9 @@ class EmailService:
                     pass
             raise e
 
+    # Alias for backwards compatibility
+    _get_smtp_connection = get_smtp_connection
+
     @classmethod
     def _send_smtp_sync(
         cls,
@@ -148,10 +245,10 @@ class EmailService:
         html_content: str,
         text_content: Optional[str] = None,
     ) -> None:
-        """Synchronous SMTP fallback — runs in a thread pool."""
-        smtp_user = settings.SMTP_USERNAME or settings.SMTP_USER
-        from_name = settings.SMTP_FROM_NAME or settings.EMAILS_FROM_NAME or "HomeSync"
-        from_email = str(settings.SMTP_FROM_EMAIL or settings.EMAILS_FROM_EMAIL or smtp_user)
+        """Synchronous SMTP handler — runs in a thread pool."""
+        cfg = cls.get_smtp_config()
+        from_name = cfg["from_name"]
+        from_email = str(cfg["from_email"])
 
         if not from_email:
             raise ValueError("Sender email is not configured.")
@@ -166,11 +263,11 @@ class EmailService:
         msg.attach(MIMEText(text_content, "plain", "utf-8"))
         msg.attach(MIMEText(html_content, "html", "utf-8"))
 
-        server = cls._get_smtp_connection()
+        server = cls.get_smtp_connection()
         try:
-            logger.info(f"[SMTP] Transmitting to {to_email}...")
+            logger.info(f"[{cfg['provider_type'].upper()}] Transmitting to {to_email}...")
             server.sendmail(from_email, [to_email], msg.as_string())
-            logger.info(f"[SMTP] Email accepted for delivery to {to_email}")
+            logger.info(f"[{cfg['provider_type'].upper()}] Email accepted for delivery to {to_email}")
         except smtplib.SMTPDataError as e:
             code = e.args[0]
             err_msg = e.args[1].decode("utf-8", errors="replace") if isinstance(e.args[1], bytes) else str(e.args[1])
@@ -187,7 +284,7 @@ class EmailService:
         except smtplib.SMTPAuthenticationError as e:
             logger.error(f"[SMTP Auth Error] {str(e)}")
             raise ServiceUnavailableError(
-                detail="Email service authentication failed.",
+                detail=f"Email service authentication failed ({cfg['provider_type']}). Check credentials in .env.",
                 error_code="EMAIL_AUTH_FAILED",
             )
         except smtplib.SMTPException as e:
@@ -216,25 +313,30 @@ class EmailService:
     ) -> None:
         """
         Primary send method.
-        Uses Brevo HTTP API if BREVO_API_KEY is set, otherwise falls back to SMTP.
-        Logs a mock in development if neither is configured.
+        Routes email sending based on EMAIL_PROVIDER in settings ('gmail', 'brevo_smtp', 'brevo_api', 'mock').
         """
-        if settings.BREVO_API_KEY:
-            await cls._send_via_brevo_api(to_email, subject, html_content, text_content)
-            return
+        cfg = cls.get_smtp_config()
+        provider_type = cfg["provider_type"]
 
-        if settings.SMTP_HOST:
-            logger.warning("[Email] BREVO_API_KEY not set — falling back to SMTP relay.")
+        if provider_type in ("gmail", "brevo_smtp", "smtp"):
+            logger.info(f"[Email] Dispatching via {provider_type.upper()} SMTP to {to_email}...")
             await asyncio.to_thread(cls._send_smtp_sync, to_email, subject, html_content, text_content)
             return
 
+        if provider_type == "brevo_api":
+            if settings.BREVO_API_KEY:
+                logger.info(f"[Email] Dispatching via Brevo HTTP API to {to_email}...")
+                await cls._send_via_brevo_api(to_email, subject, html_content, text_content)
+                return
+            logger.warning("[Email] BREVO_API_KEY is not set — falling back to dev mock.")
+
         # Development mock — no sending configured
         logger.warning(
-            f"\n--- [DEVELOPMENT EMAIL MOCK] ---\n"
+            f"\n--- [DEVELOPMENT EMAIL MOCK ({provider_type.upper()})] ---\n"
             f"To: {to_email}\n"
             f"Subject: {subject}\n"
             f"Body (HTML):\n{html_content}\n"
-            f"---------------------------------\n"
+            f"---------------------------------------------------\n"
         )
 
     @classmethod
@@ -304,38 +406,47 @@ class EmailService:
 def verify_smtp_connectivity() -> bool:
     """
     Startup connectivity check.
-    When BREVO_API_KEY is set this is a no-op (HTTP API needs no pre-check).
-    Only performs a TCP test when falling back to SMTP relay.
+    Performs DNS resolution and TCP socket test for the configured email provider.
     """
-    if settings.BREVO_API_KEY:
-        logger.info("[Email Startup] BREVO_API_KEY is configured. Using Brevo HTTP API — skipping SMTP connectivity check.")
-        return True
+    cfg = EmailService.get_smtp_config()
+    provider_type = cfg["provider_type"]
 
-    smtp_host = settings.SMTP_HOST
-    smtp_port = settings.SMTP_PORT or 587
-
-    if not smtp_host:
-        logger.warning("[Email Startup] Neither BREVO_API_KEY nor SMTP_HOST is configured. Running in DEV MOCK mode.")
+    if provider_type == "brevo_api":
+        if settings.BREVO_API_KEY:
+            logger.info("[Email Startup] Provider set to 'brevo_api'. Brevo HTTP API is configured.")
+            return True
+        logger.warning("[Email Startup] BREVO_API_KEY is not configured.")
         return False
 
-    logger.info(f"[SMTP Startup] Testing connectivity to {smtp_host}:{smtp_port}...")
+    if provider_type == "mock":
+        logger.info("[Email Startup] Provider set to 'mock'. Running in DEV MOCK mode.")
+        return True
+
+    smtp_host = cfg["smtp_host"]
+    smtp_port = cfg["smtp_port"] or 587
+
+    if not smtp_host:
+        logger.warning(f"[Email Startup] No SMTP host configured for provider '{provider_type}'. Running in DEV MOCK mode.")
+        return False
+
+    logger.info(f"[{provider_type.upper()} Startup] Testing connectivity to {smtp_host}:{smtp_port}...")
     try:
         ip = socket.gethostbyname(smtp_host)
-        logger.info(f"[SMTP Startup] DNS resolved: {smtp_host} -> {ip}")
+        logger.info(f"[{provider_type.upper()} Startup] DNS resolved: {smtp_host} -> {ip}")
     except socket.gaierror as e:
-        logger.error(f"[SMTP Startup] DNS resolution failed for {smtp_host}: {str(e)}")
+        logger.error(f"[{provider_type.upper()} Startup] DNS resolution failed for {smtp_host}: {str(e)}")
         return False
 
     try:
         s = socket.create_connection((smtp_host, smtp_port), timeout=5.0)
         s.close()
-        logger.info(f"[SMTP Startup] TCP connection to {smtp_host}:{smtp_port} OK.")
+        logger.info(f"[{provider_type.upper()} Startup] TCP connection to {smtp_host}:{smtp_port} OK.")
         return True
     except socket.timeout:
-        logger.error(f"[SMTP Startup] Connection timeout to {smtp_host}:{smtp_port}. Port may be blocked.")
+        logger.error(f"[{provider_type.upper()} Startup] Connection timeout to {smtp_host}:{smtp_port}. Port may be blocked.")
         return False
     except (ConnectionRefusedError, OSError) as e:
-        logger.error(f"[SMTP Startup] Connection failed to {smtp_host}:{smtp_port}: {str(e)}")
+        logger.error(f"[{provider_type.upper()} Startup] Connection failed to {smtp_host}:{smtp_port}: {str(e)}")
         return False
 
 
