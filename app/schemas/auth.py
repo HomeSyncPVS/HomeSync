@@ -133,11 +133,25 @@ class SendOtpRequest(BaseModel):
     target: str = Field(..., description="Email address or Phone number to send OTP to")
     purpose: OtpPurpose
 
+    @field_validator("purpose", mode="before")
+    @classmethod
+    def normalize_purpose(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.lower().strip()
+        return v
+
 
 class VerifyOtpRequest(BaseModel):
     target: str = Field(..., description="Email address or Phone number OTP was sent to")
     code: str = Field(..., min_length=6, max_length=6, description="6-digit OTP code")
     purpose: OtpPurpose
+
+    @field_validator("purpose", mode="before")
+    @classmethod
+    def normalize_purpose(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.lower().strip()
+        return v
 
 
 class RefreshTokenRequest(BaseModel):

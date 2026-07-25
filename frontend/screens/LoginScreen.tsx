@@ -119,7 +119,7 @@ export default function LoginScreen({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target: identifier.trim(),
-          purpose: 'LOGIN',
+          purpose: 'login',
         }),
       });
       const data = await response.json();
