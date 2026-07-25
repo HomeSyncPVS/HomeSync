@@ -11,6 +11,8 @@ import { StyleSheet,
   ActivityIndicator,
   StatusBar } from 'react-native';
 
+import { API_BASE_URL } from '../utils/api';
+
 interface ResetPasswordScreenProps {
   initialToken?: string;
   onSuccess: () => void;
@@ -22,7 +24,7 @@ export default function ResetPasswordScreen({
   initialToken = '',
   onSuccess,
   onNavigateBack,
-  apiBaseUrl = 'http://10.0.2.2:8000/api/v1',
+  apiBaseUrl = API_BASE_URL,
 }: ResetPasswordScreenProps) {
   const [token, setToken] = useState(initialToken);
   const [newPassword, setNewPassword] = useState('');

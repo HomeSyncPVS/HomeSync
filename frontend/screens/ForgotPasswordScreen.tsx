@@ -11,6 +11,8 @@ import { StyleSheet,
   ActivityIndicator,
   StatusBar } from 'react-native';
 
+import { API_BASE_URL } from '../utils/api';
+
 interface ForgotPasswordScreenProps {
   onSuccess: (email: string) => void;
   onNavigateToLogin: () => void;
@@ -20,7 +22,7 @@ interface ForgotPasswordScreenProps {
 export default function ForgotPasswordScreen({
   onSuccess,
   onNavigateToLogin,
-  apiBaseUrl = 'http://10.0.2.2:8000/api/v1',
+  apiBaseUrl = API_BASE_URL,
 }: ForgotPasswordScreenProps) {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);

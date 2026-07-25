@@ -11,6 +11,8 @@ import { StyleSheet,
   ActivityIndicator,
   StatusBar } from 'react-native';
 
+import { API_BASE_URL } from '../utils/api';
+
 interface OtpVerificationScreenProps {
   target: string; // The email/phone number destination
   purpose?: 'register' | 'reset' | 'login';
@@ -24,7 +26,7 @@ export default function OtpVerificationScreen({
   purpose = 'register',
   onVerificationSuccess,
   onNavigateBack,
-  apiBaseUrl = 'http://172.171.15.222:8000/api/v1',
+  apiBaseUrl = API_BASE_URL,
 }: OtpVerificationScreenProps) {
   const [code, setCode] = useState<string[]>(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);

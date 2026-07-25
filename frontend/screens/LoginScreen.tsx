@@ -11,6 +11,7 @@ import { StyleSheet,
   ActivityIndicator,
   StatusBar } from 'react-native';
 import { saveTokens, saveUserRole } from '../utils/storage';
+import { API_BASE_URL } from '../utils/api';
 
 interface LoginScreenProps {
   onLoginSuccess: (role: string) => void;
@@ -25,7 +26,7 @@ export default function LoginScreen({
   onNavigateToRegister,
   onNavigateToForgotPassword,
   onLoginWithOtp,
-  apiBaseUrl = 'http://172.171.15.222:8000/api/v1'
+  apiBaseUrl = API_BASE_URL
 }: LoginScreenProps) {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');

@@ -11,6 +11,8 @@ import { StyleSheet,
   ActivityIndicator,
   StatusBar } from 'react-native';
 
+import { API_BASE_URL } from '../utils/api';
+
 interface RegisterScreenProps {
   onRegisterSuccess: (target: string, isVerified?: boolean) => void;
   onNavigateToLogin: () => void;
@@ -20,7 +22,7 @@ interface RegisterScreenProps {
 export default function RegisterScreen({
   onRegisterSuccess,
   onNavigateToLogin,
-  apiBaseUrl = 'http://172.171.15.222:8000/api/v1',
+  apiBaseUrl = API_BASE_URL,
 }: RegisterScreenProps) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');

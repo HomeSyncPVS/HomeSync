@@ -102,7 +102,7 @@ class Settings(BaseSettings):
 
 
 
-    BACKEND_URL: str = "https://homesync-production-8952.up.railway.app"
+    BACKEND_URL: str = "https://homesync-five.vercel.app"
     ENVIRONMENT: str = "development"
 
     @field_validator("SECRET_KEY")
