@@ -75,29 +75,30 @@ class AuthService:
         if not role:
             raise NotFoundError(detail="Default Role 'Resident' not found in database.", error_code="ROLE_NOT_FOUND")
 
-        from app.utils.supabase_auth import SupabaseAuthClient
+        from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
+        from app.core.security import get_password_hash
 
-        # Sign up in Supabase (only email or phone can be provided to Supabase signup at once, so we pass email and store the phone number in our local database)
-        try:
-            supabase_user = await SupabaseAuthClient.signup_user(email=data.email, password=data.password, phone=None)
-        except Exception as e:
-            err_msg = str(e).lower()
-            if "already registered" in err_msg or "already_registered" in err_msg:
-                # User already exists in Supabase but not in our local DB.
-                # Let's verify the user's password by attempting to log them in via Supabase.
-                try:
-                    supabase_user = await SupabaseAuthClient.login_user(data.email, data.password, db)
-                except Exception:
-                    # If login fails (wrong password or other authentication error), raise the standard conflict error
-                    raise ConflictError(detail="Email is already registered.", error_code="EMAIL_IN_USE")
-            else:
-                raise e
-        
-        # Extract user ID (handles both real nested 'user' key and mock flat dict)
-        user_id_str = supabase_user.get("id") or supabase_user.get("user", {}).get("id")
-        if not user_id_str:
-            raise ValidationError(detail="Failed to retrieve user ID from Supabase signup response.")
-        supabase_uid = uuid.UUID(user_id_str)
+        if is_supabase_mock():
+            supabase_uid = uuid.uuid4()
+            hashed_pw = get_password_hash(data.password)
+        else:
+            try:
+                supabase_user = await SupabaseAuthClient.signup_user(email=data.email, password=data.password, phone=None)
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "already registered" in err_msg or "already_registered" in err_msg:
+                    try:
+                        supabase_user = await SupabaseAuthClient.login_user(data.email, data.password, db)
+                    except Exception:
+                        raise ConflictError(detail="Email is already registered.", error_code="EMAIL_IN_USE")
+                else:
+                    raise e
+            
+            user_id_str = supabase_user.get("id") or supabase_user.get("user", {}).get("id")
+            if not user_id_str:
+                raise ValidationError(detail="Failed to retrieve user ID from Supabase signup response.")
+            supabase_uid = uuid.UUID(user_id_str)
+            hashed_pw = "SUPABASE_AUTH"
 
         # Send custom OTP email for verification
         is_verified = False
@@ -106,7 +107,7 @@ class AuthService:
             id=supabase_uid,
             email=data.email,
             phone=data.phone,
-            hashed_password="SUPABASE_AUTH",
+            hashed_password=hashed_pw,
             full_name=data.full_name,
             role_id=role.id,
             society_id=data.society_id,

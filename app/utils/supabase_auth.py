@@ -18,7 +18,7 @@ logger = logging.getLogger("homesync.supabase_auth")
 
 
 def is_supabase_mock() -> bool:
-    return "mock.supabase.co" in settings.SUPABASE_URL
+    return not getattr(settings, "USE_SUPABASE_AUTH", False) or "mock.supabase.co" in settings.SUPABASE_URL
 
 
 class SupabaseAuthClient:
@@ -59,7 +59,7 @@ class SupabaseAuthClient:
         Registers a user with Supabase Auth (GoTrue).
         """
         if is_supabase_mock():
-            logger.info(f"[MOCK AUTH] Signed up user: {email}")
+            logger.info(f"[LOCAL AUTH] Signed up user: {email}")
             user_id = str(uuid.uuid4())
             return {"id": user_id, "email": email}
 
@@ -85,20 +85,25 @@ class SupabaseAuthClient:
     @staticmethod
     async def login_user(email: str, password: str, db: Any) -> Dict[str, Any]:
         """
-        Authenticates a user via Supabase Auth (GoTrue).
+        Authenticates a user via local DB / Supabase Auth.
         """
         if is_supabase_mock():
-            # In mock mode, fetch local user to create a valid mock access token
             from app.repositories.user import UserRepository
+            from app.core.security import verify_password
             user_repo = UserRepository()
             user = await user_repo.get_by_email(db, email)
             if not user:
                 user = await user_repo.get_by_phone(db, email)
             if not user:
                 raise AuthenticationError(detail="Invalid email or password.")
+
+            # Verify local password hash if stored
+            if user.hashed_password and user.hashed_password != "SUPABASE_AUTH":
+                if not verify_password(password, user.hashed_password):
+                    raise AuthenticationError(detail="Invalid email or password.")
             
             session_id = uuid.uuid4()
-            user_permissions = [p.name for p in user.role.permissions] if user.role else []
+            user_permissions = [p.name for p in user.role.permissions] if user.role and user.role.permissions else []
             role_name = user.role.name if user.role else "Resident"
             
             access_token = create_access_token(

@@ -54,6 +54,7 @@ class Settings(BaseSettings):
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     # Supabase Settings
+    USE_SUPABASE_AUTH: bool = False
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
     SUPABASE_BUCKET_NAME: str = "profile-images"
