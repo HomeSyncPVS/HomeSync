@@ -320,8 +320,16 @@ class EmailService:
 
         if provider_type in ("gmail", "brevo_smtp", "smtp"):
             logger.info(f"[Email] Dispatching via {provider_type.upper()} SMTP to {to_email}...")
-            await asyncio.to_thread(cls._send_smtp_sync, to_email, subject, html_content, text_content)
-            return
+            try:
+                await asyncio.to_thread(cls._send_smtp_sync, to_email, subject, html_content, text_content)
+                return
+            except Exception as e:
+                logger.error(f"[Email] {provider_type.upper()} SMTP dispatch failed: {str(e)}")
+                if settings.BREVO_API_KEY:
+                    logger.warning("[Email] Falling back to Brevo HTTP API...")
+                    await cls._send_via_brevo_api(to_email, subject, html_content, text_content)
+                    return
+                raise e
 
         if provider_type == "brevo_api":
             if settings.BREVO_API_KEY:
