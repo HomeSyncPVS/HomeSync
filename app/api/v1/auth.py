@@ -148,8 +148,6 @@ async def verify_otp(
     data: VerifyOtpRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
-
     token = None
     access_token = None
     refresh_token = None
@@ -166,10 +164,6 @@ async def verify_otp(
                 user.is_verified = True
                 db.add(user)
                 await db.flush()
-
-            # Confirm user in Supabase via GoTrue Admin API
-            if not is_supabase_mock():
-                await SupabaseAuthClient.admin_confirm_user(str(user.id))
 
             ip_address = request.client.host if request.client else None
             user_agent = request.headers.get("user-agent")

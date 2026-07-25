@@ -20,33 +20,31 @@ user_repo = UserRepository()
 session_repo = SessionRepository()
 
 
-from app.utils.supabase_auth import SupabaseAuthClient
-
-
 async def get_current_user(
     db: AsyncSession = Depends(get_db), token: str = Depends(reusable_oauth2)
 ) -> User:
     """
-    Decodes the JWT access token using Supabase and returns the authenticated User.
+    Decodes the signed JWT access token and returns the authenticated User directly from PostgreSQL.
     """
-    supabase_user = await SupabaseAuthClient.verify_access_token(token)
-    user_id = supabase_user.get("id")
-
-    if not user_id:
+    payload = verify_token(token)
+    if not payload:
         raise AuthenticationError(detail="Invalid or expired access token.", error_code="INVALID_ACCESS_TOKEN")
 
-    user = await user_repo.get(db, uuid.UUID(user_id))
+    user_id_str = payload.get("sub") or payload.get("user_id")
+    if not user_id_str:
+        raise AuthenticationError(detail="Invalid or expired access token.", error_code="INVALID_ACCESS_TOKEN")
+
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        raise AuthenticationError(detail="Invalid token payload.", error_code="INVALID_ACCESS_TOKEN")
+
+    user = await user_repo.get(db, user_id)
     if not user:
         raise AuthenticationError(detail="User not found.", error_code="USER_NOT_FOUND")
 
     if not user.is_active:
         raise ForbiddenError(detail="User account is deactivated.")
-
-    # Dynamically sync is_verified status if confirmed in Supabase
-    if supabase_user.get("is_verified") and not user.is_verified:
-        user.is_verified = True
-        db.add(user)
-        await db.flush()
 
     return user
 

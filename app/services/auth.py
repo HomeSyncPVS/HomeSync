@@ -3,17 +3,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 logger = logging.getLogger("homesync.auth")
 
 from app.db.database import AsyncSessionLocal
-from sqlalchemy import select
-from app.models.society import Society, SocietySettings
-from app.models.wing import Wing
-from app.models.floor import Floor
-from app.models.flat import Flat
 from app.core.config import settings
-from app.core.constants import RoleEnum, TokenType
+from app.core.constants import RoleEnum, TokenType, OtpPurpose
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -23,14 +19,13 @@ from app.core.security import (
     verify_token,
 )
 from app.models.user import User
-from app.models.session import Session
+from app.models.session import Session as UserSession
 from app.models.device import Device
 from app.models.password_reset import PasswordReset
 from app.repositories.user import UserRepository
 from app.repositories.role import RoleRepository
 from app.repositories.session import SessionRepository
 from app.repositories.device import DeviceRepository
-from app.repositories.otp import OTPRepository
 from app.schemas.auth import (
     RegisterRequest,
     LoginRequest,
@@ -44,8 +39,6 @@ from app.exceptions.custom import (
     NotFoundError,
     ValidationError,
 )
-from app.utils.security import generate_random_token
-from app.utils.email import send_password_reset_email
 
 user_repo = UserRepository()
 role_repo = RoleRepository()
@@ -57,7 +50,7 @@ class AuthService:
     @staticmethod
     async def register_user(db: AsyncSession, data: RegisterRequest) -> User:
         """
-        Create a new user with standard role 'Resident'.
+        Create a new user directly in PostgreSQL with Argon2 password hash.
         """
         # Check if email exists
         existing_email = await user_repo.get_by_email(db, data.email)
@@ -75,36 +68,11 @@ class AuthService:
         if not role:
             raise NotFoundError(detail="Default Role 'Resident' not found in database.", error_code="ROLE_NOT_FOUND")
 
-        from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
-        from app.core.security import get_password_hash
-
-        if is_supabase_mock():
-            supabase_uid = uuid.uuid4()
-            hashed_pw = get_password_hash(data.password)
-        else:
-            try:
-                supabase_user = await SupabaseAuthClient.signup_user(email=data.email, password=data.password, phone=None)
-            except Exception as e:
-                err_msg = str(e).lower()
-                if "already registered" in err_msg or "already_registered" in err_msg:
-                    try:
-                        supabase_user = await SupabaseAuthClient.login_user(data.email, data.password, db)
-                    except Exception:
-                        raise ConflictError(detail="Email is already registered.", error_code="EMAIL_IN_USE")
-                else:
-                    raise e
-            
-            user_id_str = supabase_user.get("id") or supabase_user.get("user", {}).get("id")
-            if not user_id_str:
-                raise ValidationError(detail="Failed to retrieve user ID from Supabase signup response.")
-            supabase_uid = uuid.UUID(user_id_str)
-            hashed_pw = "SUPABASE_AUTH"
-
-        # Send custom OTP email for verification
-        is_verified = False
+        user_id = uuid.uuid4()
+        hashed_pw = get_password_hash(data.password)
 
         new_user = User(
-            id=supabase_uid,
+            id=user_id,
             email=data.email,
             phone=data.phone,
             hashed_password=hashed_pw,
@@ -112,61 +80,45 @@ class AuthService:
             role_id=role.id,
             society_id=data.society_id,
             is_active=True,
-            is_verified=is_verified,
+            is_verified=False,
         )
         user = await user_repo.create(db, obj_in=new_user)
         await db.flush()
 
-        # Custom OTP generation and sending for email confirmation
-        if not is_verified:
-            from app.services.otp import OTPService
-            import asyncio
+        # Custom OTP generation and sending for email confirmation via Brevo
+        from app.services.otp import OTPService
+        import asyncio
 
-            async def _send_otp_background():
-                async with AsyncSessionLocal() as bg_db:
-                    try:
-                        await OTPService.generate_and_send_otp(bg_db, data.email, "register")
-                        await bg_db.commit()
-                        logger.info(f"[Registration] Custom OTP email sent successfully to {data.email}")
-                    except Exception as otp_err:
-                        logger.error(f"[Registration Background Error] Failed to send registration OTP email to {data.email}: {str(otp_err)}")
+        async def _send_otp_background():
+            async with AsyncSessionLocal() as bg_db:
+                try:
+                    await OTPService.generate_and_send_otp(bg_db, data.email, "register")
+                    await bg_db.commit()
+                    logger.info(f"[Registration] Custom OTP email sent successfully to {data.email}")
+                except Exception as otp_err:
+                    logger.error(f"[Registration Background Error] Failed to send registration OTP email to {data.email}: {str(otp_err)}")
 
-            asyncio.create_task(_send_otp_background())
+        asyncio.create_task(_send_otp_background())
 
         return user
 
     @staticmethod
     async def login_user(db: AsyncSession, data: LoginRequest, ip_address: Optional[str], user_agent: Optional[str]) -> Dict[str, Any]:
         """
-        Authenticate user, register/bind devices, and return JWT credentials.
+        Authenticate user directly against PostgreSQL using Argon2 password verification,
+        register/bind device, create session in homesync.sessions, and return JWT credentials.
         """
-        from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
-
-        if is_supabase_mock():
-            return await SupabaseAuthClient.login_user(data.email, data.password, db)
-
-        # Authenticate via Supabase GoTrue
-        supabase_session = await SupabaseAuthClient.login_user(data.email, data.password, db)
-        access_token = supabase_session["access_token"]
-        refresh_token = supabase_session["refresh_token"]
-        supabase_user = supabase_session["user"]
-        supabase_uid = uuid.UUID(supabase_user["id"])
-
-        user = await user_repo.get(db, supabase_uid)
+        user = await user_repo.get_by_email(db, data.email)
         if not user:
-            user = await user_repo.get_by_email(db, data.email)
-            if not user:
-                raise AuthenticationError(detail="Invalid email or password.")
+            user = await user_repo.get_by_phone(db, data.email)
+        if not user:
+            raise AuthenticationError(detail="Invalid email or password.")
 
         if not user.is_active:
             raise ForbiddenError(detail="User account is deactivated.")
 
-        # Sync verification state dynamically
-        is_verified = "email_confirmed_at" in supabase_user and supabase_user["email_confirmed_at"] is not None
-        if is_verified and not user.is_verified:
-            user.is_verified = True
-            db.add(user)
-            await db.flush()
+        if not verify_password(data.password, user.hashed_password):
+            raise AuthenticationError(detail="Invalid email or password.")
 
         if not user.is_verified:
             raise ForbiddenError(
@@ -193,6 +145,35 @@ class AuthService:
                 await db.flush()
 
         session_id = uuid.uuid4()
+        expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+        user_permissions = [p.name for p in user.role.permissions] if user.role and user.role.permissions else []
+        role_name = user.role.name if user.role else "Resident"
+
+        access_token = create_access_token(
+            user_id=str(user.id),
+            role=role_name,
+            permissions=user_permissions,
+            session_id=str(session_id),
+            society_id=str(user.society_id) if user.society_id else None,
+        )
+        refresh_token = create_refresh_token(
+            user_id=str(user.id),
+            session_id=str(session_id),
+        )
+
+        session_obj = UserSession(
+            id=session_id,
+            user_id=user.id,
+            device_id=device_obj.id if device_obj else None,
+            refresh_token_hash=hash_token(refresh_token),
+            ip_address=ip_address,
+            user_agent=user_agent,
+            is_active=True,
+            expires_at=expires_at,
+        )
+        await session_repo.create(db, obj_in=session_obj)
+        await db.flush()
 
         return {
             "access_token": access_token,
@@ -209,27 +190,56 @@ class AuthService:
         user_agent: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Creates session fallback for mock / testing.
+        Creates session object in PostgreSQL and returns JWT tokens.
         """
         session_id = uuid.uuid4()
-        temp_refresh_token = create_refresh_token(
-            user_id=str(user.id),
-            session_id=str(session_id),
-            token_version=1
-        )
-        
-        user_permissions = [p.name for p in user.role.permissions] if user.role else []
+        expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+        user_permissions = [p.name for p in user.role.permissions] if user.role and user.role.permissions else []
+        role_name = user.role.name if user.role else "Resident"
+
         access_token = create_access_token(
             user_id=str(user.id),
-            society_id=str(user.society_id) if user.society_id else None,
-            role=user.role.name if user.role else "Resident",
+            role=role_name,
             permissions=user_permissions,
+            session_id=str(session_id),
+            society_id=str(user.society_id) if user.society_id else None,
+        )
+        refresh_token = create_refresh_token(
+            user_id=str(user.id),
+            session_id=str(session_id),
+        )
+
+        session_obj = UserSession(
+            id=session_id,
+            user_id=user.id,
+            refresh_token_hash=hash_token(refresh_token),
+            ip_address=ip_address,
+            user_agent=user_agent,
+            is_active=True,
+            expires_at=expires_at,
+        )
+        await session_repo.create(db, obj_in=session_obj)
+        await db.flush()
+
+        user_permissions = [p.name for p in user.role.permissions] if user.role and user.role.permissions else []
+        role_name = user.role.name if user.role else "Resident"
+
+        access_token = create_access_token(
+            user_id=str(user.id),
+            role=role_name,
+            permissions=user_permissions,
+            session_id=str(session_id),
+            society_id=str(user.society_id) if user.society_id else None,
+        )
+        refresh_token = create_refresh_token(
+            user_id=str(user.id),
             session_id=str(session_id),
         )
 
         return {
             "access_token": access_token,
-            "refresh_token": temp_refresh_token,
+            "refresh_token": refresh_token,
             "session_id": session_id,
             "user": user,
         }
@@ -237,122 +247,125 @@ class AuthService:
     @staticmethod
     async def refresh_access_token(db: AsyncSession, refresh_token: str) -> Dict[str, str]:
         """
-        Validate refresh token and rotate tokens.
+        Validate refresh token, verify active session in DB, and rotate tokens.
         """
-        from app.utils.supabase_auth import SupabaseAuthClient
-        
-        result = await SupabaseAuthClient.refresh_token(refresh_token)
+        payload = verify_token(refresh_token)
+        if not payload or payload.get("token_type") != TokenType.REFRESH.value:
+            raise AuthenticationError(detail="Invalid or expired refresh token.")
+
+        user_id_str = payload.get("sub")
+        session_id_str = payload.get("session_id")
+        if not user_id_str or not session_id_str:
+            raise AuthenticationError(detail="Invalid refresh token payload.")
+
+        user_id = uuid.UUID(user_id_str)
+        session_id = uuid.UUID(session_id_str)
+
+        user = await user_repo.get(db, user_id)
+        if not user or not user.is_active:
+            raise AuthenticationError(detail="User inactive or not found.")
+
+        session_obj = await session_repo.get(db, session_id)
+        if not session_obj or not session_obj.is_active:
+            raise AuthenticationError(detail="Session is inactive or revoked.")
+
+        user_permissions = [p.name for p in user.role.permissions] if user.role and user.role.permissions else []
+        role_name = user.role.name if user.role else "Resident"
+
+        new_access_token = create_access_token(
+            user_id=str(user.id),
+            role=role_name,
+            permissions=user_permissions,
+            session_id=str(session_id),
+            society_id=str(user.society_id) if user.society_id else None,
+        )
+        new_refresh_token = create_refresh_token(
+            user_id=str(user.id),
+            session_id=str(session_id),
+        )
+
         return {
-            "access_token": result["access_token"],
-            "refresh_token": result["refresh_token"],
+            "access_token": new_access_token,
+            "refresh_token": new_refresh_token,
         }
 
     @staticmethod
     async def logout_session(db: AsyncSession, refresh_token: str, token: Optional[str] = None) -> None:
         """
-        Logout current session.
+        Revoke active session in homesync.sessions.
         """
-        from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
-
-        if is_supabase_mock():
-            return
-
-        if not token:
-            try:
-                refreshed = await SupabaseAuthClient.refresh_token(refresh_token)
-                token = refreshed.get("access_token")
-            except Exception:
-                pass
-
-        if token:
-            await SupabaseAuthClient.logout(token, scope="local")
+        payload = verify_token(refresh_token) if refresh_token else None
+        if payload and payload.get("session_id"):
+            session_id = uuid.UUID(payload["session_id"])
+            session_obj = await session_repo.get(db, session_id)
+            if session_obj:
+                session_obj.is_active = False
+                db.add(session_obj)
+                await db.flush()
 
     @staticmethod
     async def logout_all_sessions(db: AsyncSession, user_id: uuid.UUID, token: Optional[str] = None) -> None:
         """
-        Revoke all active sessions for a user globally.
+        Revoke all active sessions for a user in homesync.sessions.
         """
-        from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
-
-        if is_supabase_mock():
-            return
-
-        if token:
-            await SupabaseAuthClient.logout(token, scope="global")
+        sessions = await session_repo.get_user_sessions(db, user_id)
+        for session_obj in sessions:
+            session_obj.is_active = False
+            db.add(session_obj)
+        await db.flush()
 
     @staticmethod
     async def change_password(db: AsyncSession, user: User, data: ChangePasswordRequest, token: Optional[str] = None) -> None:
         """
-        Change user password. Requires verification of the current password.
+        Change user password in homesync.users. Requires verification of current password.
         """
-        from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
+        if not verify_password(data.current_password, user.hashed_password):
+            raise ValidationError(detail="Current password is incorrect.", error_code="INVALID_CURRENT_PASSWORD")
 
-        if is_supabase_mock():
-            if not verify_password(data.current_password, user.hashed_password):
-                raise ValidationError(detail="Current password is incorrect.", error_code="INVALID_CURRENT_PASSWORD")
-            user.hashed_password = get_password_hash(data.new_password)
-            db.add(user)
-            await db.flush()
-            return
-
-        if token:
-            await SupabaseAuthClient.update_user(token, {"password": data.new_password})
-            user.login_attempts = 0
-            user.locked_until = None
-            db.add(user)
-            await db.flush()
+        user.hashed_password = get_password_hash(data.new_password)
+        user.login_attempts = 0
+        user.locked_until = None
+        db.add(user)
+        await db.flush()
 
     @staticmethod
     async def request_password_reset(db: AsyncSession, email: str) -> None:
         """
-        Generate and send password reset request.
+        Generate and send 6-digit password reset OTP email via Brevo.
         """
         user = await user_repo.get_by_email(db, email)
         if not user:
             return
 
-        from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
-
-        if is_supabase_mock():
-            from app.services.otp import OTPService
-            from app.core.constants import OtpPurpose
-            await OTPService.generate_and_send_otp(db, email, OtpPurpose.RESET.value)
-            return
-
-        await SupabaseAuthClient.recover(email)
+        from app.services.otp import OTPService
+        await OTPService.generate_and_send_otp(db, email, OtpPurpose.RESET.value)
 
     @staticmethod
     async def reset_password(db: AsyncSession, token: str, new_password: str) -> None:
         """
-        Reset user password.
+        Reset user password using token in homesync.password_resets or verified OTP.
         """
-        from app.utils.supabase_auth import SupabaseAuthClient, is_supabase_mock
+        token_hash = hash_token(token)
+        query = select(PasswordReset).where(
+            PasswordReset.token_hash == token_hash,
+            PasswordReset.is_used == False,
+            PasswordReset.expires_at > datetime.now(timezone.utc)
+        )
+        result = await db.execute(query)
+        reset_record = result.scalar_one_or_none()
 
-        if is_supabase_mock():
-            token_hash = hash_token(token)
-            query = select(PasswordReset).where(
-                PasswordReset.token_hash == token_hash,
-                PasswordReset.is_used == False,
-                PasswordReset.expires_at > datetime.now(timezone.utc)
-            )
-            result = await db.execute(query)
-            reset_record = result.scalar_one_or_none()
+        if not reset_record:
+            raise ValidationError(detail="Password reset token is invalid or has expired.", error_code="INVALID_RESET_TOKEN")
 
-            if not reset_record:
-                raise ValidationError(detail="Password reset token is invalid or has expired.", error_code="INVALID_RESET_TOKEN")
+        user = await user_repo.get(db, reset_record.user_id)
+        if not user:
+            raise NotFoundError(detail="User not found.")
 
-            user = reset_record.user
-            user.hashed_password = get_password_hash(new_password)
-            user.login_attempts = 0
-            user.locked_until = None
-            db.add(user)
+        user.hashed_password = get_password_hash(new_password)
+        user.login_attempts = 0
+        user.locked_until = None
+        db.add(user)
 
-            reset_record.is_used = True
-            db.add(reset_record)
-            await db.flush()
-            return
-
-        # token is the access_token in production
-        await SupabaseAuthClient.update_user(token, {"password": new_password})
-
-
+        reset_record.is_used = True
+        db.add(reset_record)
+        await db.flush()
